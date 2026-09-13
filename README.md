@@ -14,6 +14,7 @@
 - [安装](#安装)
 - [配置 API Key](#配置-api-key)
 - [配置项](#配置项)
+- [按命令自定义（模型 / 思考强度 / Prompt）](#按命令自定义模型--思考强度--prompt)
 - [命令与热键](#命令与热键)
 - [使用指南](#使用指南)
   - [解释 / 翻译 / 改写](#解释--翻译--改写)
@@ -47,7 +48,8 @@
 | 特性 | 说明 |
 |---|---|
 | ⚡ 秒级快捷动作 | 解释 / 翻译 / 改写，默认**关闭思考**（`thinking.disabled`），首字最快 |
-| 🎛 思考强度可配 | `none` / `low` / `high` / `max`，快捷命令与对话分别配置 |
+| 🎛 模型 / 强度按命令可配 | 全局默认之外，5 条 AI 命令各自可覆盖 Model 与思考强度 |
+| 📝 Prompt 可自定义 | `Configure Prompts` 命令多行编辑 system prompt，可一键恢复内置默认 |
 | 💬 多轮对话 | 搜索栏就是输入框，右侧是可滚动的 Markdown 对话区 |
 | 🖼 读图 | `Ask About Image` 或对话里附加图片 |
 | 📋 替换或复制 | 结果页主操作可直接替换选中的文本，或只复制 |
@@ -127,16 +129,63 @@ DEEPSEEK_API_KEY: sk-你的key
 
 `Raycast → Settings → Extensions → DeepSeek Quick`
 
+下面这些是**扩展全局的默认值**。每条 AI 命令都能单独覆盖模型与思考强度，
+prompt 也能整体替换 —— 见下一节。
+
 | 项 | 默认 | 说明 |
 |---|---|---|
 | **API Key** | 空 | 留空则依次回退到环境变量 `DEEPSEEK_API_KEY`、`~/.dsh/.credentials.yaml` |
 | **API Endpoint** | `https://api.deepseek.com/v1` | OpenAI 兼容端点，**不要**带 `/chat/completions` |
-| **Model** | `deepseek-flash` | 换成 `deepseek-v4-pro` 也可以 |
-| **Quick Action Reasoning** | `none` | 解释 / 翻译 / 改写 / 看图 的思考强度。默认**不思考，最快** |
-| **Chat Reasoning** | `low` | Chat / 继续讨论 的思考强度 |
-| **Translate To** | `中文` | `Translate Selection` 的目标语言 |
+| **Model** | `deepseek-flash` | 全局默认模型。换成 `deepseek-v4-pro` 也可以；各命令可单独覆盖 |
+| **Quick Action Reasoning** | `none` | 解释 / 翻译 / 改写 / 看图的**全局默认**思考强度。默认不思考，最快 |
+| **Chat Reasoning** | `low` | Chat / 继续讨论的**全局默认**思考强度 |
+| **Translate To** | `中文` | `Translate Selection` 的目标语言（内置 prompt 会用到） |
 | **Reasoning** | 关 | 是否在结果里显示模型的思考链 |
 | **Output Behavior** | `replace` | 结果页主操作（`↵`）：替换选中文本 / 复制 |
+
+## 按命令自定义（模型 / 思考强度 / Prompt）
+
+5 条 AI 命令（`Explain` / `Translate` / `Rewrite` / `Ask About Image` / `Chat`）都能
+**各自**指定模型、思考强度和 system prompt。优先级统一是：
+
+```
+本命令的覆盖  →  扩展全局设置  →  内置默认
+```
+
+### 模型 / 思考强度（Raycast 原生命令级偏好）
+
+`Raycast → Settings → Extensions → DeepSeek Quick` → **选中某条命令** → 右侧就是它的
+`Model` 和 `Reasoning` 两项：
+
+- **Model** 留空 = 跟随扩展全局 **Model**
+- **Reasoning** 选 **跟随全局设置** = 用扩展全局的思考强度；选具体档位则**只对这一条命令生效**
+
+也可以在运行时直接跳过去：结果页 / 对话页 `⌘K` → **配置本命令的模型 / 思考强度**。
+
+> `Chat with Selection` 没有自己的设置项 —— 它最终是通过 `launchCommand` 拉起 `Chat` 的，
+> 所以走 **Chat** 的配置。
+
+### System Prompt（Configure Prompts）
+
+根搜索里运行 **`Configure Prompts`**：列出每条 AI 命令，显示当前用的是「内置默认」还是
+「已自定义」，并在右侧预览当前生效的完整 prompt。
+
+| 操作 | 说明 |
+|---|---|
+| `↵` 编辑 Prompt | `Form.TextArea`，**支持多行** |
+| `⌘⇧R` 恢复内置默认 | 删掉该命令的覆盖 |
+| `⌘⇧⌫` 清空全部自定义 | 所有命令回到内置 |
+| `⌘,` 打开扩展设置 | 全局 Model / 思考强度 / API Key |
+
+**留空、或内容与内置完全相同，都会回落到内置默认** —— 所以「打开表单直接保存」不会把内置
+prompt 固化成一份副本。想在内置基础上改，直接编辑预填好的内容即可。
+
+> **为什么 prompt 不用 Raycast 偏好**：偏好的类型只有 `textfield` / `password` / `checkbox` /
+> `dropdown` / `appPicker` / `file` / `directory`，**没有多行输入**，prompt 塞进 `textfield`
+> 得手写 `\n`。所以分工是：prompt 走自建配置命令 + `LocalStorage`，模型和思考强度这类单值
+> 才用原生偏好。
+
+> 翻译命令的内置 prompt 会带上当前的 **Translate To** 目标语言；一旦自定义，就完全以你写的为准。
 
 ## 命令与热键
 
@@ -147,8 +196,9 @@ DEEPSEEK_API_KEY: sk-你的key
 | `Rewrite Selection` | 改写 / 润色选中文本 | `⌥D` |
 | `Ask About Image` | 对 Finder 里选中的图片提问 | `⌥G` |
 | `Chat` | 多轮对话，可附加图片 | `⌥C` |
-| `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（预填输入框） | `⌥V` |
+| `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（作为参考内容） | `⌥V` |
 | `History` | 浏览历史对话并从任意一条继续 | — |
+| `Configure Prompts` | 按命令自定义 system prompt（多行） | — |
 
 **设置热键**：Raycast 根搜索里输入命令名 → `⌘K` → **Configure Command** → **Record Hotkey**。
 
@@ -314,7 +364,7 @@ npm run fix-lint # ray lint --fix
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 12 条**已修复、不要改回去**的硬性约束。
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 13 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
@@ -324,26 +374,29 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   └── icon.png                扩展图标
 ├── src/
 │   ├── lib/
-│   │   ├── config.ts           偏好设置解析 + API Key 三级回退
+│   │   ├── config.ts           偏好解析（全局 + 命令级覆盖）+ API Key 三级回退
 │   │   ├── deepseek.ts         SSE 流式客户端、vision、reasoning_content
-│   │   ├── prompts.ts          各命令的 system prompt
+│   │   ├── prompts.ts          各命令的内置 system prompt
 │   │   ├── history.ts          LocalStorage 对话存储（剥图片、限 200 条）
 │   │   ├── images.ts           图片文件 → data URI
 │   │   ├── selection.ts        「当前选区」统一读取（文字 / Finder 图片）
+│   │   ├── prompt-config.ts    每命令 system prompt 覆盖（LocalStorage）
 │   │   ├── use-stream.ts       流式状态 hook（80ms 节流 + 去重）
 │   │   └── debug.ts            追加写 /tmp/dsq-debug.log
 │   ├── components/
-│   │   ├── quick-action.tsx    读选中文本的通用外壳
+│   │   ├── quick-action.tsx    读选中文本的通用外壳（解析本命令的 prompt）
 │   │   ├── result-view.tsx     快捷命令结果页（流式 + 替换/复制 + 继续讨论）
 │   │   ├── chat-view.tsx       多轮对话主界面
-│   │   └── history-view.tsx    两栏历史浏览器
+│   │   ├── history-view.tsx    两栏历史浏览器
+│   │   └── prompt-config-view.tsx   Configure Prompts 界面
 │   ├── explain.tsx             ┐
 │   ├── translate.tsx           │
-│   ├── rewrite.tsx             │ 7 个命令入口，
+│   ├── rewrite.tsx             │ 8 个命令入口，
 │   ├── ask-image.tsx           │ 每个对应 package.json 里的一条 command
 │   ├── chat.tsx                │
 │   ├── chat-selection.tsx      │
-│   └── history.tsx             ┘
+│   ├── history.tsx             │
+│   └── configure.tsx           ┘
 ├── package.json                扩展 manifest（命令、偏好、脚本）
 ├── tsconfig.json               TypeScript 配置
 └── AGENTS.md                   面向 AI / 贡献者的工程说明

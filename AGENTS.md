@@ -44,21 +44,23 @@ npx tsc --noEmit   # 类型检查，CI 友好、无副作用
 ```
 src/
   lib/
-    config.ts        偏好设置解析（prefs()）+ API Key 三级回退（apiKey()）
+    config.ts        偏好解析 prefs()（扩展级 + 命令级覆盖）+ API Key 三级回退（apiKey()）
     deepseek.ts      SSE 流式客户端 streamChat()、ContentPart/imagePart/textPart/messageText
-    prompts.ts       各命令的 system prompt（纯字符串常量，无逻辑）
+    prompts.ts       各命令的**内置** system prompt（纯字符串常量，无逻辑）
     history.ts       LocalStorage 会话存储：list/save/delete/clear，剥图片、限 200 条
     images.ts        图片文件路径 → data URI（isImagePath / toDataUri）
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
+    prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
     use-stream.ts    useStream()：单次流式请求的 React hook（80ms 节流 + 去重）
     debug.ts         dbg()：追加写 /tmp/dsq-debug.log（临时调试用，可整体删除）
   components/
-    quick-action.tsx 快捷命令通用外壳：读选区 → 组装 messages → ResultView
+    quick-action.tsx 快捷命令通用外壳：读选区 + 解析本命令 prompt → 组装 messages → ResultView
     result-view.tsx  结果页：流式渲染 + 主操作（替换/复制）+ ⌘N 继续讨论
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
-  explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx /
-  chat.tsx / chat-selection.tsx / history.tsx      ← 7 个命令入口，文件名 = command name
+    prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
+  explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx / chat.tsx /
+  chat-selection.tsx / history.tsx / configure.tsx   ← 8 个命令入口，文件名 = command name
 ```
 
 **入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
@@ -143,6 +145,29 @@ Chat with Selection（热键）
 - 逐行读 `data:`，忽略 `[DONE]`，`JSON.parse` 失败就跳过（容忍半包/心跳）。
 - `choices[0].delta.content` → 正文；`choices[0].delta.reasoning_content` → 思考链（两者分开累积）。
 - 末尾 `usage` 取出 token 用量。
+
+### 6. 配置解析（模型 / 思考强度 / Prompt）
+
+三个维度的来源不同，改代码时别混：
+
+| 维度 | 存放位置 | 读取方式 |
+|---|---|---|
+| model、思考强度 | `package.json` → `commands[].preferences`（Raycast **原生命令级偏好**） | `prefs()` |
+| system prompt | LocalStorage（`prompt-config.ts`，键 `deepseek-quick.prompt-overrides`） | `resolveSystemPrompt(command, builtin)` |
+| apiKey / endpoint / translateTo / 输出行为 | 扩展级 `preferences` | `prefs()` |
+
+**model / 强度**：`getPreferenceValues()` 返回的是**当前命令作用域**的合并结果 ——
+Raycast 让命令级偏好自动继承扩展级。所以 `prefs()` **不需要知道现在跑的是哪条命令**，
+它只做三级回落：
+
+```ts
+p.modelOverride?.trim() || p.model?.trim() || "deepseek-flash"
+asOptionalEffort(p.effortOverride) ?? asEffort(p.quickActionEffort /* 或 reasoningEffort */, ...)
+```
+
+**prompt**：每个入口把 `command` 传给 `QuickAction`，由它调
+`resolveSystemPrompt(command, BUILTIN)` 拿生效值。`ask-image.tsx` 和 `chat-view.tsx`
+不经过 `QuickAction`，各自解析。解析失败一律**静默回落到内置 prompt**（配置读不出来不该让命令挂掉）。
 
 ## 硬性约束（Invariants）—— 改代码前必读
 
@@ -251,17 +276,29 @@ Raycast 会直接拒绝：
 - 「满宽 / 可读长文本 / 有输入框」三者只能同时满足两个，ChatView 选的是
   「满宽 + 可读」，输入靠 `List` 的搜索栏，导航靠下拉。
 
+### 13. 命令级偏好**不能**与扩展级同名
+
+Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项」。但覆盖是连同该字段的
+`default` 一起生效的：如果在每条命令里都声明 `model` 且带 `default: "deepseek-flash"`，
+用户在扩展设置里把全局 Model 改成 `deepseek-v4-pro` 后，**每条命令仍会用自己的默认值** ——
+全局设置直接失效。
+
+正确做法：命令级一律用 `modelOverride` / `effortOverride` 这类**不同名**字段（不带 default，
+或 default 用 `"inherit"` 这类哨兵值），再由 `prefs()` 显式做「空则回落」。
+新增命令级偏好时必须遵守。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
 
-1. **加 prompt** — `src/lib/prompts.ts`：
+1. **加内置 prompt** — `src/lib/prompts.ts`：
 
    ```ts
    export const SUMMARIZE_SYSTEM = ["你是一个总结助手。", "", "要求：", "- 用 3 条以内的要点概括。"].join("\n");
    ```
 
-2. **加入口** — 新建 `src/summarize.tsx`（文件名必须 = command name）：
+2. **加入口** — 新建 `src/summarize.tsx`（文件名必须 = command name）。
+   注意 `command` 是**必填** prop，它决定「Configure Prompts」里能改到哪条：
 
    ```tsx
    import { SUMMARIZE_SYSTEM } from "./lib/prompts";
@@ -270,6 +307,7 @@ Raycast 会直接拒绝：
    export default function Command() {
      return (
        <QuickAction
+         command="summarize"
          title="总结选中文本"
          system={SUMMARIZE_SYSTEM}
          buildUser={(selection) => `请总结下面这段文本：\n\n${selection}`}
@@ -278,7 +316,8 @@ Raycast 会直接拒绝：
    }
    ```
 
-3. **注册 manifest** — `package.json` 的 `commands` 数组追加：
+3. **注册 manifest** — `package.json` 的 `commands` 数组追加。想让它也能单独配模型 / 思考强度，
+   就从别的命令**复制整个 `preferences` 数组**（只改 description 里的命令名，字段名不要动）：
 
    ```json
    {
@@ -286,31 +325,44 @@ Raycast 会直接拒绝：
      "title": "Summarize Selection",
      "subtitle": "DeepSeek",
      "description": "总结选中的文本",
-     "mode": "view"
+     "mode": "view",
+     "preferences": [ /* 复制 explain 的 modelOverride + effortOverride */ ]
    }
    ```
 
-4. `npm run dev`（重新生成类型）→ 在 Raycast 里验收。热键由用户在 Raycast 设置里自己绑。
+4. **登记到 Prompts 配置界面** — 漏了这步 `Configure Prompts` 里就看不到它：
+   - `src/lib/prompt-config.ts` → `PROMPT_COMMANDS` 数组
+   - `src/components/prompt-config-view.tsx` → `META` 映射 + `builtinPrompt()` 的 `switch`
 
-> 需要读图的命令参考 `ask-image.tsx`（它自己处理 `getSelectedFinderItems` + `Form` 提问，
-> 最后仍然复用 `ResultView`）。
+   `PROMPT_COMMANDS` 是 `PromptCommand` 的唯一来源，漏了 `META` / `switch` 会被 TS 立刻报出来。
+
+5. `npm run build`（或 `npm run dev`）重新生成 `raycast-env.d.ts` → 在 Raycast 里验收。
+   热键由用户在 Raycast 设置里自己绑。
+
+> 需要读图的命令参考 `ask-image.tsx`（它自己处理 `getSelectedFinderItems` + `Form` 提问、
+> 自己解析 prompt，最后仍然复用 `ResultView`）。
 
 ### 修改某个命令的 prompt
 
-只改 `src/lib/prompts.ts` 里的常量即可，无逻辑耦合。注意 prompt 里已声明「用 Markdown」等约定，
-保持风格一致。
+**内置** prompt 在 `src/lib/prompts.ts`；**用户覆盖**由 `Configure Prompts` 命令写进 LocalStorage。
+改内置常量**不会**影响已经存在的覆盖（覆盖优先），要清掉得用界面里的「恢复内置默认」。
+注意 prompt 里已声明「用 Markdown」等约定，保持风格一致。
 
 ### 新增一个配置项
 
-1. `package.json` → `preferences` 加一项（要有 `name` / `title` / `type`）。
-2. `src/lib/config.ts` → `ExtensionPreferences` 接口加字段，并在 `prefs()` 里给出默认值与规整逻辑
-   （参考 `asEffort()` / endpoint 去尾斜杠的写法）。
-3. 使用处通过 `prefs()` 读取 —— **不要**散落调用 `getPreferenceValues()`。
+- **扩展级（全局默认）**：
+  1. `package.json` → 顶层 `preferences` 加一项（必须有 `name` / `title` / `description` / `type`）。
+  2. `src/lib/config.ts` → `ExtensionPreferences` 加字段，并在 `prefs()` 里给出默认值与规整逻辑
+     （参考 `asEffort()` / endpoint 去尾斜杠的写法）。
+  3. 使用处统一通过 `prefs()` 读取 —— **不要**散落调用 `getPreferenceValues()`。
+- **命令级（单条命令覆盖）**：`package.json` → `commands[].preferences`，**字段名必须与扩展级不同**
+  （见约束 13），再在 `prefs()` 里做「空则回落」。
 
 ### 换模型 / 接别的 OpenAI 兼容端点
 
 改扩展设置里的 **Model** / **API Endpoint** 即可，代码无需改动。
 `deepseek-v4-pro` 已验证可用。端点不要带 `/chat/completions`（代码会自动拼）。
+只让某一条命令换模型 → 改那条命令自己的 **Model**（即 `modelOverride`）。
 
 ### 调整历史容量
 
@@ -340,6 +392,11 @@ interface Conversation {
 }
 
 interface Selection { text: string; images: string[] }   // images 是 data URI
+
+/** 允许自定义 prompt 的命令。PROMPT_COMMANDS 是唯一来源，新增命令必须登记 */
+type PromptCommand = "explain" | "translate" | "rewrite" | "ask-image" | "chat";
+/** LocalStorage 里的覆盖表；空字符串不落盘，全空时整个 key 被删除 */
+type PromptOverrides = Partial<Record<PromptCommand, string>>;
 ```
 
 ## 调试
@@ -369,6 +426,6 @@ interface Selection { text: string; images: string[] }   // images 是 data URI
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 12 条硬性约束
+- [ ] 没有触碰上面 13 条硬性约束
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name
