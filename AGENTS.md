@@ -184,13 +184,26 @@ React（StrictMode / dev）会跑 `effect → cleanup → effect`。若在 clean
 第一次请求会被立刻掐断，而 `startedRef` 又挡住了第二次 —— **界面永远空白**。
 取消只能由用户显式触发的 `stop()` 负责。（`src/lib/use-stream.ts:96-101`）
 
-### 2. `⌘↵` 和 `⌘C` 是 Raycast **保留键**
+### 2. `⌘↵`、`⌘C`、`⌘,` 是 Raycast **保留键**
 
-给 `Action` 显式设这些 shortcut 会抛错：
-`The shortcut prop provided to the Action ... is reserved by Raycast and has been removed.`
-抛错会触发 React 重挂载 → 又走到约束 1 的 cleanup → 请求被 abort。
+给 `Action` 显式设保留键会被 Raycast 丢掉并报错：
 
-> **正确做法**：把主操作放在 `ActionPanel` 的**第一位**，Raycast 会自动给它绑 `↵`。
+> The `shortcut` prop provided to the Action `...` is reserved by Raycast and has been removed.
+> Please use another shortcut instead of `{"modifiers":["cmd"],"key":","}`.
+
+后果有**两层**，第二层尤其烦人：
+
+1. 抛错会触发 React 重挂载 → 走到约束 1 的 cleanup → 请求被 abort。
+2. 只要命令报过错，Raycast 会给这个扩展挂上**错误图标** —— 窗口左下角那个
+   **红色三角感叹号**。它不会自己消失，要改完代码重启 `ray develop` 才消。
+
+- **已知保留**：`⌘↵`（主操作）、`⌘C`（复制）、`⌘,`（Raycast 偏好设置）
+- **实测可用**：`⌘N` / `⌘Z` / `⌘X` / `⌘⇧R` / `⌘⇧⌫` / `⌘⇧I` / `⌘⇧H` / `⌘⇧C` / `⌘⌥C`
+
+> **正确做法**：把主操作放在 `ActionPanel` 的**第一位**，Raycast 会自动给它绑 `↵`；
+> 其余动作如果可能撞上保留键，就干脆不设 shortcut，靠 `⌘K` 面板触发。
+> 拿不准时先跑一遍命令，看 `~/.config/raycast/extensions/<name>/dev.log` 有没有
+> `reserved by Raycast` 的报错。
 
 ### 3. 流式 `setState` 必须**节流 + 去重**
 

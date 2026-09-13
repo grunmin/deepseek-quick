@@ -164,7 +164,6 @@ export function ConfigureView() {
                     <Action
                       title="打开扩展设置（全局 Model / 思考强度 / API Key）"
                       icon={Icon.Gear}
-                      shortcut={{ modifiers: ["cmd"], key: "," }}
                       onAction={openExtensionPreferences}
                     />
                   </ActionPanel.Section>
