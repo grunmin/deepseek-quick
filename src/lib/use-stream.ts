@@ -17,7 +17,10 @@ const FLUSH_INTERVAL_MS = 80;
  * 跑一次流式请求，把增量合并进 state。
  * 之所以节流，是因为每个 token 都 setState 会让 Raycast 的 Detail 疯狂重排。
  */
-export function useStream(messages: ChatMessage[] | null, opts?: { effort?: Effort; temperature?: number }) {
+export function useStream(
+  messages: ChatMessage[] | null,
+  opts?: { model?: string; effort?: Effort; temperature?: number },
+) {
   const [state, setState] = useState<StreamState>({
     content: "",
     reasoning: "",

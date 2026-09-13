@@ -1,18 +1,18 @@
 import { Action, ActionPanel, Detail, Form, getSelectedFinderItems } from "@raycast/api";
 import { useEffect, useState } from "react";
-import { imagePart, textPart, type ChatMessage } from "./lib/deepseek";
+import { imagePart, textPart } from "./lib/deepseek";
 import { prefs } from "./lib/config";
 import { IMAGE_SYSTEM } from "./lib/prompts";
 import { resolveSystemPrompt } from "./lib/prompt-config";
 import { isImagePath, toDataUri } from "./lib/images";
-import { ResultView } from "./components/result-view";
+import { ResultView, type ResultRun } from "./components/result-view";
 
 export default function Command() {
   const [images, setImages] = useState<string[] | null>(null);
   /** 这条命令生效的 system prompt（可能被 Configure Prompts 覆盖） */
   const [systemPrompt, setSystemPrompt] = useState(IMAGE_SYSTEM);
   const [error, setError] = useState<string>();
-  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [run, setRun] = useState<ResultRun | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -37,7 +37,7 @@ export default function Command() {
 
   if (error) return <Detail markdown={`### 无法读取图片\n\n${error}`} />;
   if (!images) return <Detail isLoading markdown="" />;
-  if (messages) return <ResultView title="看图问答" messages={messages} effort={prefs().quickActionEffort} />;
+  if (run) return <ResultView title="看图问答" run={run} />;
 
   return (
     <Form
@@ -46,13 +46,14 @@ export default function Command() {
           <Action.SubmitForm
             title="提问"
             onSubmit={({ question }: { question?: string }) => {
-              setMessages([
-                { role: "system", content: systemPrompt },
-                {
-                  role: "user",
-                  content: [textPart(question?.trim() || "描述这张图片。"), ...images.map(imagePart)],
-                },
-              ]);
+              const p = prefs();
+              setRun({
+                system: systemPrompt,
+                user: [textPart(question?.trim() || "描述这张图片。"), ...images.map(imagePart)],
+                model: p.model,
+                effort: p.quickActionEffort,
+                // 不开放「换模型 / 强度重新生成」：换到不带 vision 的模型会直接失败
+              });
             }}
           />
         </ActionPanel>

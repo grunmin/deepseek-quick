@@ -52,12 +52,13 @@ src/
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
     prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
     presets.ts       Chat 预设（prompt / model / effort）+ 逐级回落、损坏备份
+                     + 快捷命令用的 resolvePresetForRun() / listPresetRunOptions()
     migration.ts     设备迁移包：打包 / 解析 / 预览 / 应用 / 撤销点（换机迁移）
     use-stream.ts    useStream()：单次流式请求的 React hook（80ms 节流 + 去重）
     debug.ts         dbg()：追加写 /tmp/dsq-debug.log（临时调试用，可整体删除）
   components/
     quick-action.tsx 快捷命令通用外壳：读选区 + 解析本命令 prompt → 组装 messages → ResultView
-    result-view.tsx  结果页：流式渲染 + 主操作（替换/复制）+ ⌘N 继续讨论
+    result-view.tsx  结果页：流式渲染 + 主操作（替换/复制）+ ⌘N 继续讨论 + 换配置重新生成
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
@@ -79,12 +80,13 @@ default export 一个 async 函数（参考 `chat-selection.tsx`）。
 ```
 用户选文本 → 按热键
   → src/explain.tsx 渲染 <QuickAction>
-  → quick-action.tsx: getSelectedText()  → messages = [system, user]
-  → result-view.tsx: useStream(messages, { effort: prefs().quickActionEffort })
+  → quick-action.tsx: getSelectedText() → ResultRun { system, user, model, effort }（本命令基线）
+  → result-view.tsx: messages = [system, user] → useStream(messages, { model, effort })
   → use-stream.ts: streamChat() SSE → 节流 setState
-  → Detail markdown 流式渲染
+  → Detail markdown 流式渲染（底部标出这次用的组合）
   → 主操作 ↵ ：Clipboard.paste() 替换原文 / CopyToClipboard
   → ⌘N ：<ChatView initialMessages={[...messages, assistant]} />
+  → ⌘⇧R / ⌘K 子菜单：换模型 / 换强度 / 换 Preset → 换 key 重挂载 StreamedResult
 ```
 
 > `run-prompt` 是这条链路的特例：`buildUser` 直接**原样返回选区** —— 选中的文本本身就是 prompt，
@@ -410,6 +412,32 @@ Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），�
 
 改完跑 `npm run verify`（54 项断言：全流程 + 旧格式 + 未知字段 + id 冲突 + 撤销 + 损坏数据不覆盖 + 空包）。
 
+### 17. 「换配置重新生成」的三条硬规则
+
+结果页支持换模型 / 思考强度 / Preset 重跑，实现在 `result-view.tsx` 的两层：
+`ResultView`（管配置）→ `StreamedResult`（跑请求）。改这块时：
+
+1. **重跑只能靠换 `key` 重挂载，不能去改 `useStream` 的 effect**。它「只跑一次」是约束 1 的
+   直接后果（cleanup 里 abort 会让界面永远空白）。`ResultView` 用 `nonce` 当 `key`，
+   换配置时先 `stop()` 掉在途请求，再 `setNonce(n + 1)`。
+2. **快捷命令里的 Preset 必须走 `resolvePresetForRun(id, base)`**，基线 `base` 由调用方传
+   （这条命令自己的 prompt / model / effort）。**不要**调 `resolveActivePreset()` —— 它是
+   Chat 命令作用域的（约束 15），在 explain / translate 里会回落到 Chat 的覆盖值。
+   同理，内置「默认」预设对快捷命令意味着"用本命令的 prompt"，**不能**直接用
+   `resolveBuiltinEffective()` 解出来的那份 Chat prompt。
+3. **只做单轴切换，不做组合矩阵**。预设 × 模型 × 强度是 20+ 项，子菜单没法用；
+   要整套换就选 Preset（它本身就是一套组合）。切换**只影响这一次生成**，不写设置 / 预设 / 历史 ——
+   想改默认去命令设置或 `Configure Prompts`。
+
+配套两个 API 限制（查过类型定义，不是"没找到"）：
+
+- `Action` **没有 `subtitle`**（只有 `List.Item` 有），所以 Preset 菜单把「模型 · 强度」摘要
+  并进了 `title`；别再找 `subtitle` 属性。
+- `ActionPanel.Submenu` 支持 `filtering` / `isLoading`（继承 `SearchBarInterface`），
+  但**没有** `searchBarPlaceholder`；`Action.Push` 可以放在子菜单里（`chat-view.tsx` 已有先例）。
+
+`Ask About Image` **不开放**这个菜单：换到不带 vision 的模型会直接失败（`regenerable: false`）。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -520,6 +548,19 @@ interface Selection { text: string; images: string[] }   // images 是 data URI
 type PromptCommand = "explain" | "translate" | "rewrite" | "run-prompt" | "ask-image" | "chat";
 /** LocalStorage 里的覆盖表；空字符串不落盘，全空时整个 key 被删除 */
 type PromptOverrides = Partial<Record<PromptCommand, string>>;
+
+/** 快捷命令的一次生成：system / user 分开存，换 prompt 时才能重建 messages */
+interface ResultRun {
+  system: string;
+  user: ChatMessage["content"];
+  model: string;                 // 本命令的基线（Preset 的「跟随」落到这里）
+  effort: Effort;
+  regenerable?: boolean;         // 看图不开：换到无 vision 的模型会失败
+}
+/** 这一次生成**实际**用的配置；换 Preset 时 system 也会被换掉 */
+interface RunConfig { system: string; model: string; effort: Effort; presetId?: string; presetName?: string }
+/** Preset 在**快捷命令**里的回落基线（不是 Chat 的，见约束 17） */
+interface PresetRunBase { system: string; model: string; effort: Effort }
 ```
 
 ## 调试
@@ -553,7 +594,7 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
 - [ ] `npm run lint` 通过
 - [ ] 动了迁移 / 存储结构时，`npm run verify` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 16 条硬性约束
+- [ ] 没有触碰上面 17 条硬性约束
 - [ ] 新增 LocalStorage key 时，已按第 16 条登记进迁移包
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name

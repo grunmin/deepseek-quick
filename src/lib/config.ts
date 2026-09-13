@@ -6,6 +6,15 @@ import { dbg } from "./debug";
 
 export type Effort = "none" | "low" | "high" | "max";
 
+/**
+ * 「换模型重新生成」菜单的候选来源。
+ *
+ * Model 本身是**自由文本**偏好（OpenAI 兼容端点可以接任意模型名），枚举不完，
+ * 所以这里只放确认可用的；菜单里还会并上「当前全局 Model」与「各 Preset 用到的模型」
+ * （见 `components/result-view.tsx`），要接别的模型走菜单里的「自定义模型…」。
+ */
+export const KNOWN_MODELS = ["deepseek-flash", "deepseek-v4-pro"];
+
 export interface ExtensionPreferences {
   apiKey?: string;
   apiEndpoint: string;

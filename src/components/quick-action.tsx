@@ -1,15 +1,16 @@
 import { Detail, getSelectedText } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
 import { prefs } from "../lib/config";
-import type { ChatMessage } from "../lib/deepseek";
 import { dbg } from "../lib/debug";
 import { resolveSystemPrompt, type PromptCommand } from "../lib/prompt-config";
-import { ResultView } from "./result-view";
+import { ResultView, type ResultRun } from "./result-view";
 
 /**
- * 快捷命令的通用外壳：读选中文本 → 解析这条命令生效的 system prompt → 组装 messages → 交给 ResultView。
+ * 快捷命令的通用外壳：读选中文本 → 解析这条命令生效的 system prompt → 组装运行配置 → 交给 ResultView。
  *
  * system prompt 会被 `Configure Prompts` 命令的覆盖替换（见 lib/prompt-config.ts）。
+ * 同时把**基线**（本命令的 prompt / 模型 / 强度）交给 ResultView，
+ * 用于结果页的「换模型 / 换强度 / 换 Preset 重新生成」。
  */
 export function QuickAction({
   command,
@@ -24,7 +25,7 @@ export function QuickAction({
   system: string;
   buildUser: (selection: string) => string;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [run, setRun] = useState<ResultRun | null>(null);
   const [error, setError] = useState<string>();
   const startedRef = useRef(false);
 
@@ -40,10 +41,14 @@ export function QuickAction({
         const text = selection.trim();
         dbg(`QuickAction[${command}]: getSelectedText 返回 ${text.length} 字符`);
         if (!text) throw new Error("当前没有选中的文本。");
-        setMessages([
-          { role: "system", content: systemPrompt },
-          { role: "user", content: buildUser(text) },
-        ]);
+        const p = prefs();
+        setRun({
+          system: systemPrompt,
+          user: buildUser(text),
+          model: p.model,
+          effort: p.quickActionEffort,
+          regenerable: true,
+        });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         dbg(`QuickAction[${command}]: 失败 ${message.slice(0, 200)}`);
@@ -60,9 +65,9 @@ export function QuickAction({
     return <Detail navigationTitle={title} markdown={`### 无法开始\n\n${error}`} />;
   }
 
-  if (!messages) {
+  if (!run) {
     return <Detail isLoading navigationTitle={title} markdown="" />;
   }
 
-  return <ResultView title={title} messages={messages} effort={prefs().quickActionEffort} />;
+  return <ResultView title={title} run={run} />;
 }

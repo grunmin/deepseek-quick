@@ -424,3 +424,102 @@ export function describePreset(preset: ChatPreset): string {
   const effort = preset.effort === "inherit" ? "跟随全局强度" : `reasoning ${preset.effort}`;
   return `${model} · ${effort}`;
 }
+
+/* ───────────── 快捷命令的「换 Preset / 模型 / 强度重新生成」 ───────────── */
+
+/**
+ * Preset 在快捷命令里的**回落基线**。
+ *
+ * 为什么不复用 `resolveActivePreset()`：那个是 **Chat 命令作用域**的 —— `prefs()` 会取到
+ * Chat 的 `modelOverride` / `effortOverride`（见约束 15），在 explain / translate 里调就会
+ * 回落到错的模型与强度。所以基线必须由调用方显式传进来，也就是这条命令自己的值。
+ */
+export interface PresetRunBase {
+  /** 本命令生效的 system prompt */
+  system: string;
+  model: string;
+  effort: Effort;
+}
+
+/** 已经回落好、可直接拿去发请求的 Preset */
+export interface PresetRunConfig {
+  id: string;
+  name: string;
+  system: string;
+  model: string;
+  effort: Effort;
+}
+
+/** 菜单里的一项：只用于展示，真正点选时再用 `resolvePresetForRun()` 取最新值 */
+export interface PresetRunOption {
+  id: string;
+  name: string;
+  /** 「模型 · 强度」摘要 */
+  summary: string;
+  /** 解析后的模型，用来汇总「换模型」菜单的候选 */
+  model: string;
+}
+
+async function resolveRunConfig(id: string, base: PresetRunBase): Promise<PresetRunConfig | undefined> {
+  const builtin = findBuiltin(id);
+  if (builtin) {
+    const override = await getBuiltinOverride(builtin.id);
+    const effective = await resolveBuiltinEffective(builtin);
+    return {
+      id: builtin.id,
+      name: builtin.name,
+      // 「默认」预设的 prompt 在代码里是 `undefined`：对 Chat 它表示"用 Chat 的 prompt"，
+      // 对快捷命令则是"用本命令自己的 prompt"，所以这里不能直接用 effective 解析出来的那份。
+      system:
+        builtin.systemPrompt === undefined && !override?.systemPrompt?.trim() ? base.system : effective.systemPrompt,
+      model: effective.model?.trim() || base.model,
+      effort: effective.effort === "inherit" ? base.effort : effective.effort,
+    };
+  }
+
+  const preset = await getPreset(id);
+  if (!preset) return undefined;
+  return {
+    id: preset.id,
+    name: preset.name,
+    // 自定义预设的 prompt 为空时，同样回落到本命令的 prompt
+    system: preset.systemPrompt.trim() || base.system,
+    model: preset.model?.trim() || base.model,
+    effort: preset.effort === "inherit" ? base.effort : preset.effort,
+  };
+}
+
+/** 解析某个 Preset 在快捷命令里实际使用的 prompt / 模型 / 强度 */
+export async function resolvePresetForRun(id: string, base: PresetRunBase): Promise<PresetRunConfig | undefined> {
+  return resolveRunConfig(id, base);
+}
+
+/**
+ * 「换 Preset 重新生成」菜单的数据源：**内置 + 自定义**都要给。
+ * 和 Chat 那边同理（见 `listSwitchablePresets`），只遍历自定义会让内置预设"看不见"。
+ */
+export async function listPresetRunOptions(
+  base: PresetRunBase,
+): Promise<{ builtins: PresetRunOption[]; custom: PresetRunOption[] }> {
+  const toOption = (config: PresetRunConfig): PresetRunOption => ({
+    id: config.id,
+    name: config.name,
+    model: config.model,
+    summary: describeRunConfig(config),
+  });
+
+  const [builtins, custom] = await Promise.all([
+    Promise.all(BUILTIN_PRESETS.map((b) => resolveRunConfig(b.id, base))),
+    listPresets().then((list) => Promise.all(list.map((p) => resolveRunConfig(p.id, base)))),
+  ]);
+
+  return {
+    builtins: builtins.filter((c): c is PresetRunConfig => Boolean(c)).map(toOption),
+    custom: custom.filter((c): c is PresetRunConfig => Boolean(c)).map(toOption),
+  };
+}
+
+/** 一句话描述一套运行配置：`deepseek-v4-pro · reasoning high` */
+export function describeRunConfig(config: { model: string; effort: Effort }): string {
+  return `${config.model} · ${config.effort === "none" ? "不思考" : `reasoning ${config.effort}`}`;
+}
