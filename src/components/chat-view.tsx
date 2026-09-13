@@ -14,8 +14,16 @@ import { listConversations, readHistory, saveConversation, type Conversation } f
 import { CHAT_SYSTEM } from "../lib/prompts";
 import { dbg } from "../lib/debug";
 import { toDataUri } from "../lib/images";
-import { resolveSystemPrompt } from "../lib/prompt-config";
+import {
+  DEFAULT_PRESET_ID,
+  listPresets,
+  resolveActivePreset,
+  setActivePresetId,
+  type ChatPreset,
+  type ResolvedChatPreset,
+} from "../lib/presets";
 import { HistoryView } from "./history-view";
+import { ChatPresetsView } from "./chat-presets-view";
 import { ConfigureView } from "./prompt-config-view";
 
 const FLUSH_INTERVAL_MS = 80;
@@ -69,8 +77,22 @@ export function ChatView({
   const [historyCorrupted, setHistoryCorrupted] = useState(false);
   /** 「回答已生成、但写历史失败」的提示。和「请求失败」是两码事，不能混 */
   const [saveError, setSaveError] = useState<string>();
-  /** 这条命令生效的 system prompt（可能被 Configure Prompts 覆盖） */
-  const [systemPrompt, setSystemPrompt] = useState(CHAT_SYSTEM);
+  /** 当前生效的 Chat 预设（内置「默认」或某个自定义预设） */
+  const [preset, setPreset] = useState<ResolvedChatPreset | null>(null);
+  /** 预设列表，供 ⌘K → 切换 Preset 的 Submenu 使用 */
+  const [presetList, setPresetList] = useState<ChatPreset[]>([]);
+
+  /**
+   * `run()` 是 `useCallback([], ...)`，闭包里的 `preset` 会永远停在首次渲染的 `null`。
+   * 用 ref 拿最新值 —— 否则「切换预设后发的第一条消息」仍然会用旧配置。
+   */
+  const presetRef = useRef<ResolvedChatPreset | null>(null);
+  useEffect(() => {
+    presetRef.current = preset;
+  }, [preset]);
+
+  /** 当前对话用的 system prompt（预设解析不了时兜底内置） */
+  const systemPrompt = preset?.systemPrompt ?? CHAT_SYSTEM;
 
   const [currentId, setCurrentId] = useState<string | undefined>(initialConversationId);
   const currentIdRef = useRef<string | undefined>(initialConversationId);
@@ -82,20 +104,23 @@ export function ChatView({
   const runTokenRef = useRef(0);
   const busy = pending !== null;
 
-  // 首次加载会话列表 + 本命令生效的 system prompt。
+  // 首次加载会话列表 + 当前生效的 Chat 预设 + 预设列表。
   // 必须先 loaded 才能渲染条目，否则下拉和锚点会先落到空数据上，视觉上跳一下。
   useEffect(() => {
     void (async () => {
-      const [history, system] = await Promise.all([
+      const [history, resolved, presets] = await Promise.all([
         readHistory(),
-        resolveSystemPrompt("chat", CHAT_SYSTEM),
+        resolveActivePreset(),
+        listPresets(),
       ]);
       setConversations(history.conversations);
       setHistoryCorrupted(history.corrupted);
-      setSystemPrompt(system);
-      // 没有从外部带进来的对话（新开一段）时，把初始的默认 system 换成解析后的
+      presetRef.current = resolved;
+      setPreset(resolved);
+      setPresetList(presets);
+      // 没有从外部带进来的对话（新开一段）时，用当前预设的 prompt 当 system
       if (!initialMessages || initialMessages.length === 0) {
-        setMessages([{ role: "system", content: system }]);
+        setMessages([{ role: "system", content: resolved.systemPrompt }]);
       }
       setLoaded(true);
     })();
@@ -128,6 +153,30 @@ export function ChatView({
     setCurrentId(undefined);
     setMessages([{ role: "system", content: systemPrompt }]);
   }, [resetTransient, systemPrompt]);
+
+  /** 预设管理界面改过东西后，刷新 Submenu 里的列表 */
+  const reloadPresets = useCallback(async () => {
+    setPresetList(await listPresets());
+  }, []);
+
+  /**
+   * 切换预设：写到 LocalStorage，并同步更新当前对话的 system 消息。
+   *
+   * 注意这里要用 `resolveActivePreset()` 重新解析 —— 它会调 `prefs()`，
+   * 而 `prefs()` 是**命令作用域**的，在 chat 里才会带上 chat 的 modelOverride / effortOverride。
+   */
+  const switchPreset = useCallback(async (id: string) => {
+    await setActivePresetId(id);
+    const resolved = await resolveActivePreset();
+    presetRef.current = resolved;
+    setPreset(resolved);
+    setMessages((prev) => withSystemPrompt(prev, resolved.systemPrompt));
+    await showToast({
+      style: Toast.Style.Success,
+      title: `已切换到「${resolved.name}」`,
+      message: `${resolved.model} · reasoning ${resolved.effort}`,
+    });
+  }, []);
 
   /** 下拉里选中某条会话。开新对话请走 startNewChat，别复用这里的去重守卫 */
   const switchTo = useCallback(
@@ -180,9 +229,14 @@ export function ChatView({
       if (!stale()) setPending({ content, reasoning });
     };
 
+    // 发送时用**当前预设**的 system 覆盖掉历史里的那条 —— 中途切预设才能立刻生效。
+    // model / effort 里"跟随"的项已经在 resolveActivePreset() 里回落好了。
+    const active = presetRef.current;
+    const outgoing = withSystemPrompt(history, active?.systemPrompt ?? CHAT_SYSTEM);
+
     try {
       const result = await streamChat(
-        history,
+        outgoing,
         {
           onContent: (full) => {
             content = full;
@@ -193,7 +247,11 @@ export function ChatView({
             flush();
           },
         },
-        { signal: controller.signal },
+        {
+          signal: controller.signal,
+          model: active?.model,
+          effort: active?.effort,
+        },
       );
       if (stale()) return;
 
@@ -301,6 +359,34 @@ export function ChatView({
         shortcut={{ modifiers: ["cmd", "shift"], key: "i" }}
         target={<AttachForm draft={draft} attached={attachedImages} onSubmit={send} />}
       />
+
+      {/* 预设切换走 Submenu（搜索栏那个位置只能放一个 Dropdown，已经被会话占用） */}
+      <ActionPanel.Submenu title={`切换 Preset（${preset?.name ?? "默认"}）`} icon={Icon.Switch}>
+        <Action
+          title="默认"
+          icon={preset?.id === DEFAULT_PRESET_ID ? Icon.CheckCircle : Icon.Circle}
+          onAction={() => switchPreset(DEFAULT_PRESET_ID)}
+        />
+        {presetList.length > 0 ? (
+          <ActionPanel.Section title="自定义">
+            {presetList.map((item) => (
+              <Action
+                key={item.id}
+                title={item.name}
+                icon={item.id === preset?.id ? Icon.CheckCircle : Icon.Circle}
+                onAction={() => switchPreset(item.id)}
+              />
+            ))}
+          </ActionPanel.Section>
+        ) : null}
+        <ActionPanel.Section>
+          <Action.Push
+            title="管理 Presets…"
+            icon={Icon.Gear}
+            target={<ChatPresetsView onChanged={reloadPresets} />}
+          />
+        </ActionPanel.Section>
+      </ActionPanel.Submenu>
 
       {referenceBlock ? (
         <ActionPanel.Section>
@@ -410,7 +496,7 @@ export function ChatView({
           </List.Dropdown>
         ) : null
       }
-      searchBarPlaceholder={placeholder(busy, attachedImages.length, referenceBlock !== null)}
+      searchBarPlaceholder={placeholder(busy, attachedImages.length, referenceBlock !== null, preset?.name)}
     >
       {loaded ? (
         <List.Item
@@ -476,11 +562,23 @@ function AttachForm({
   );
 }
 
-function placeholder(busy: boolean, imageCount: number, hasReference: boolean): string {
+function placeholder(busy: boolean, imageCount: number, hasReference: boolean, presetName?: string): string {
+  // 把当前预设显示在输入框提示里 —— 否则切了预设没有任何视觉反馈
+  const suffix = presetName ? ` · ${presetName}` : "";
   if (busy) return "生成中…可以先打字，↵ 会先打断";
-  if (hasReference) return "已挂参考内容 · 直接问关于它的问题，↵ 发送";
-  if (imageCount > 0) return `已附 ${imageCount} 张图，输入问题后 ↵ 发送`;
-  return "输入消息，按 ↵ 发送";
+  if (hasReference) return `已挂参考内容 · 直接问关于它的问题，↵ 发送${suffix}`;
+  if (imageCount > 0) return `已附 ${imageCount} 张图，输入问题后 ↵ 发送${suffix}`;
+  return `输入消息，按 ↵ 发送${suffix}`;
+}
+
+/**
+ * 用给定的 system prompt **替换**消息列表里的那条 system。
+ *
+ * 发送前用它把历史里的 system 换成本次生效的预设 —— 这样中途切换预设能立刻生效，
+ * 而不用要求用户开新对话。
+ */
+function withSystemPrompt(messages: ChatMessage[], system: string): ChatMessage[] {
+  return [{ role: "system", content: system }, ...messages.filter((m) => m.role !== "system")];
 }
 
 function lastAssistantText(messages: ChatMessage[]): string {

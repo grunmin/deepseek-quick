@@ -193,6 +193,13 @@
       "subtitle": "DeepSeek",
       "description": "导出 / 导入对话历史（JSON），并可在数据损坏时抢救原始内容",
       "mode": "view"
+    },
+    {
+      "name": "presets",
+      "title": "Chat Presets",
+      "subtitle": "DeepSeek",
+      "description": "管理 Chat 预设：每个预设可自定义 system prompt、模型与思考强度",
+      "mode": "view"
     }
   ],
   "preferences": [
