@@ -21,14 +21,38 @@ function asEffort(value: unknown, fallback: Effort): Effort {
   return value === "none" || value === "low" || value === "high" || value === "max" ? value : fallback;
 }
 
+/** 只认四个合法档位；`"inherit"` / 空 / 其它一律当「没覆盖」 */
+function asOptionalEffort(value: unknown): Effort | undefined {
+  return value === "none" || value === "low" || value === "high" || value === "max" ? value : undefined;
+}
+
+/**
+ * 命令级偏好（`package.json` 里每条 command 的 `preferences`）。
+ *
+ * `getPreferenceValues()` 返回的是**当前命令作用域**的值：命令级偏好会自动继承扩展级，
+ * 并覆盖同名字段。所以这里不需要知道「现在跑的是哪条命令」。
+ *
+ * ⚠️ 字段必须与扩展级**不同名**。Raycast 的「命令级覆盖扩展级」是连同该字段的 `default`
+ * 一起生效的 —— 如果这里也叫 `model` 且带默认值，用户改了扩展全局 Model 也会被命令自己的
+ * default 盖掉，全局设置直接失效。所以统一用 `xxxOverride` 命名，代码里显式做「空则回落」。
+ */
+type CommandScopedPreferences = ExtensionPreferences & {
+  modelOverride?: string;
+  effortOverride?: string;
+};
+
 export function prefs(): ExtensionPreferences {
-  const p = getPreferenceValues<ExtensionPreferences>();
+  const p = getPreferenceValues<CommandScopedPreferences>();
+
+  // 优先级：本命令的覆盖 → 扩展全局设置 → 兜底默认值
+  const override = asOptionalEffort(p.effortOverride);
+
   return {
     apiKey: p.apiKey?.trim() || undefined,
     apiEndpoint: (p.apiEndpoint?.trim() || "https://api.deepseek.com/v1").replace(/\/+$/, ""),
-    model: p.model?.trim() || "deepseek-flash",
-    quickActionEffort: asEffort(p.quickActionEffort, "none"),
-    reasoningEffort: asEffort(p.reasoningEffort, "low"),
+    model: p.modelOverride?.trim() || p.model?.trim() || "deepseek-flash",
+    quickActionEffort: override ?? asEffort(p.quickActionEffort, "none"),
+    reasoningEffort: override ?? asEffort(p.reasoningEffort, "low"),
     translateTo: p.translateTo?.trim() || "中文",
     showReasoning: Boolean(p.showReasoning),
     outputBehavior: p.outputBehavior === "copy" ? "copy" : "replace",

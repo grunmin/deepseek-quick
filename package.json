@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "deepseek-quick",
   "title": "DeepSeek Quick",
-  "description": "选中文本秒级解释 / 翻译 / 改写，支持后续多轮对话与历史记录。直连 DeepSeek API，思考强度可配。",
+  "description": "选中文本秒级解释 / 翻译 / 改写，支持后续多轮对话与历史记录。直连 DeepSeek API，模型 / 思考强度 / prompt 都可按命令配置。",
   "icon": "icon.png",
   "author": "runmin",
   "categories": [
@@ -16,35 +16,155 @@
       "title": "Explain Selection",
       "subtitle": "DeepSeek",
       "description": "解释选中的文本，可继续追问",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "modelOverride",
+          "title": "Model",
+          "description": "只对 Explain 生效。留空 = 跟随扩展全局 Model",
+          "type": "textfield",
+          "required": false
+        },
+        {
+          "name": "effortOverride",
+          "title": "Reasoning",
+          "description": "只对 Explain 生效。选「跟随全局」则用扩展全局的思考强度",
+          "type": "dropdown",
+          "required": false,
+          "default": "inherit",
+          "data": [
+            { "title": "跟随全局设置（推荐）", "value": "inherit" },
+            { "title": "None (不思考，最快)", "value": "none" },
+            { "title": "Low", "value": "low" },
+            { "title": "High", "value": "high" },
+            { "title": "Max", "value": "max" }
+          ]
+        }
+      ]
     },
     {
       "name": "translate",
       "title": "Translate Selection",
       "subtitle": "DeepSeek",
       "description": "把选中的文本翻译成目标语言",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "modelOverride",
+          "title": "Model",
+          "description": "只对 Translate 生效。留空 = 跟随扩展全局 Model",
+          "type": "textfield",
+          "required": false
+        },
+        {
+          "name": "effortOverride",
+          "title": "Reasoning",
+          "description": "只对 Translate 生效。选「跟随全局」则用扩展全局的思考强度",
+          "type": "dropdown",
+          "required": false,
+          "default": "inherit",
+          "data": [
+            { "title": "跟随全局设置（推荐）", "value": "inherit" },
+            { "title": "None (不思考，最快)", "value": "none" },
+            { "title": "Low", "value": "low" },
+            { "title": "High", "value": "high" },
+            { "title": "Max", "value": "max" }
+          ]
+        }
+      ]
     },
     {
       "name": "rewrite",
       "title": "Rewrite Selection",
       "subtitle": "DeepSeek",
       "description": "改写 / 润色选中的文本",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "modelOverride",
+          "title": "Model",
+          "description": "只对 Rewrite 生效。留空 = 跟随扩展全局 Model",
+          "type": "textfield",
+          "required": false
+        },
+        {
+          "name": "effortOverride",
+          "title": "Reasoning",
+          "description": "只对 Rewrite 生效。选「跟随全局」则用扩展全局的思考强度",
+          "type": "dropdown",
+          "required": false,
+          "default": "inherit",
+          "data": [
+            { "title": "跟随全局设置（推荐）", "value": "inherit" },
+            { "title": "None (不思考，最快)", "value": "none" },
+            { "title": "Low", "value": "low" },
+            { "title": "High", "value": "high" },
+            { "title": "Max", "value": "max" }
+          ]
+        }
+      ]
     },
     {
       "name": "ask-image",
       "title": "Ask About Image",
       "subtitle": "DeepSeek",
       "description": "对 Finder 中选中的图片提问（vision）",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "modelOverride",
+          "title": "Model",
+          "description": "只对 Ask About Image 生效。留空 = 跟随扩展全局 Model",
+          "type": "textfield",
+          "required": false
+        },
+        {
+          "name": "effortOverride",
+          "title": "Reasoning",
+          "description": "只对 Ask About Image 生效。选「跟随全局」则用扩展全局的思考强度",
+          "type": "dropdown",
+          "required": false,
+          "default": "inherit",
+          "data": [
+            { "title": "跟随全局设置（推荐）", "value": "inherit" },
+            { "title": "None (不思考，最快)", "value": "none" },
+            { "title": "Low", "value": "low" },
+            { "title": "High", "value": "high" },
+            { "title": "Max", "value": "max" }
+          ]
+        }
+      ]
     },
     {
       "name": "chat",
       "title": "Chat",
       "subtitle": "DeepSeek",
       "description": "多轮对话，支持附加图片与追问",
-      "mode": "view"
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "modelOverride",
+          "title": "Model",
+          "description": "只对 Chat 生效（Chat with Selection 也走这里）。留空 = 跟随扩展全局 Model",
+          "type": "textfield",
+          "required": false
+        },
+        {
+          "name": "effortOverride",
+          "title": "Reasoning",
+          "description": "只对 Chat 生效（Chat with Selection 也走这里）。选「跟随全局」则用扩展全局的思考强度",
+          "type": "dropdown",
+          "required": false,
+          "default": "inherit",
+          "data": [
+            { "title": "跟随全局设置（推荐）", "value": "inherit" },
+            { "title": "None (关闭思考)", "value": "none" },
+            { "title": "Low", "value": "low" },
+            { "title": "High", "value": "high" },
+            { "title": "Max", "value": "max" }
+          ]
+        }
+      ]
     },
     {
       "name": "chat-selection",
@@ -58,6 +178,13 @@
       "title": "History",
       "subtitle": "DeepSeek",
       "description": "浏览历史对话并从任意一条继续",
+      "mode": "view"
+    },
+    {
+      "name": "configure",
+      "title": "Configure Prompts",
+      "subtitle": "DeepSeek",
+      "description": "给每条命令自定义 system prompt，支持多行编辑与恢复内置默认",
       "mode": "view"
     }
   ],
@@ -80,7 +207,7 @@
     {
       "name": "model",
       "title": "Model",
-      "description": "留空则用 deepseek-flash；也可换成 deepseek-v4-pro",
+      "description": "全局默认模型。留空则用 deepseek-flash；也可换成 deepseek-v4-pro。各命令可在自己的设置里单独覆盖",
       "type": "textfield",
       "required": false,
       "default": "deepseek-flash"
@@ -88,7 +215,7 @@
     {
       "name": "quickActionEffort",
       "title": "Quick Action Reasoning",
-      "description": "解释 / 翻译 / 改写 / 看图 用的思考强度",
+      "description": "解释 / 翻译 / 改写 / 看图 的全局默认思考强度。各命令可单独覆盖",
       "type": "dropdown",
       "required": false,
       "default": "none",
@@ -114,7 +241,7 @@
     {
       "name": "reasoningEffort",
       "title": "Chat Reasoning",
-      "description": "Chat / 继续讨论 用的思考强度。none = 完全关闭思考",
+      "description": "Chat / 继续讨论 的全局默认思考强度。none = 完全关闭思考。Chat 命令可单独覆盖",
       "type": "dropdown",
       "required": false,
       "default": "low",
@@ -140,7 +267,7 @@
     {
       "name": "translateTo",
       "title": "Translate To",
-      "description": "Translate Selection 命令的目标语言",
+      "description": "Translate Selection 命令的目标语言（内置 prompt 会用到它）",
       "type": "textfield",
       "required": false,
       "default": "中文"

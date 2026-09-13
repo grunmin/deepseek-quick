@@ -6,6 +6,7 @@ export default function Command() {
   const target = prefs().translateTo;
   return (
     <QuickAction
+      command="translate"
       title={`翻译成${target}`}
       system={translateSystem(target)}
       buildUser={(selection) => translateUser(selection, target)}

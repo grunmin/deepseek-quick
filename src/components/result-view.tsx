@@ -1,9 +1,10 @@
-import { Action, ActionPanel, Clipboard, Detail, Icon, showToast } from "@raycast/api";
+import { Action, ActionPanel, Clipboard, Detail, Icon, openCommandPreferences, showToast } from "@raycast/api";
 import { useMemo } from "react";
 import { prefs, type Effort } from "../lib/config";
 import type { ChatMessage } from "../lib/deepseek";
 import { useStream } from "../lib/use-stream";
 import { ChatView } from "./chat-view";
+import { ConfigureView } from "./prompt-config-view";
 
 /**
  * 快捷命令的通用结果页：流式渲染 + 主操作（替换/复制）+ 继续讨论。
@@ -82,6 +83,15 @@ export function ResultView({
             {p.outputBehavior === "replace" ? (
               <Action.CopyToClipboard title="复制结果" content={content} />
             ) : null}
+          </ActionPanel.Section>
+
+          <ActionPanel.Section title="配置">
+            <Action
+              title="配置本命令的模型 / 思考强度"
+              icon={Icon.Gear}
+              onAction={openCommandPreferences}
+            />
+            <Action.Push title="自定义 Prompt" icon={Icon.Pencil} target={<ConfigureView />} />
           </ActionPanel.Section>
 
           <ActionPanel.Section>

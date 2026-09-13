@@ -1,12 +1,22 @@
-import { Action, ActionPanel, Form, Icon, List, showToast, Toast } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Form,
+  Icon,
+  List,
+  openCommandPreferences,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { imagePart, messageText, streamChat, type ChatMessage, type ContentPart } from "../lib/deepseek";
 import { listConversations, saveConversation, type Conversation } from "../lib/history";
 import { CHAT_SYSTEM } from "../lib/prompts";
-import { prefs } from "../lib/config";
 import { dbg } from "../lib/debug";
 import { toDataUri } from "../lib/images";
+import { resolveSystemPrompt } from "../lib/prompt-config";
 import { HistoryView } from "./history-view";
+import { ConfigureView } from "./prompt-config-view";
 
 const FLUSH_INTERVAL_MS = 80;
 const NEW_CHAT_ID = "__new__";
@@ -42,8 +52,6 @@ export function ChatView({
   /** 参考图片（data URI），随参考内容一起作为背景资料 */
   referenceImages?: string[];
 }) {
-  const p = prefs();
-
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages && initialMessages.length > 0 ? initialMessages : [{ role: "system", content: CHAT_SYSTEM }],
   );
@@ -57,6 +65,8 @@ export function ChatView({
   const [error, setError] = useState<string>();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loaded, setLoaded] = useState(false);
+  /** 这条命令生效的 system prompt（可能被 Configure Prompts 覆盖） */
+  const [systemPrompt, setSystemPrompt] = useState(CHAT_SYSTEM);
 
   const [currentId, setCurrentId] = useState<string | undefined>(initialConversationId);
   const currentIdRef = useRef<string | undefined>(initialConversationId);
@@ -68,13 +78,22 @@ export function ChatView({
   const runTokenRef = useRef(0);
   const busy = pending !== null;
 
-  // 首次加载会话列表。必须先 loaded 才能渲染条目，
-  // 否则 selectedItemId 会指向一个不存在的会话，Raycast 会把它弹回第一项。
+  // 首次加载会话列表 + 本命令生效的 system prompt。
+  // 必须先 loaded 才能渲染条目，否则下拉和锚点会先落到空数据上，视觉上跳一下。
   useEffect(() => {
-    void listConversations().then((list) => {
+    void (async () => {
+      const [list, system] = await Promise.all([
+        listConversations(),
+        resolveSystemPrompt("chat", CHAT_SYSTEM),
+      ]);
       setConversations(list);
+      setSystemPrompt(system);
+      // 没有从外部带进来的对话（新开一段）时，把初始的默认 system 换成解析后的
+      if (!initialMessages || initialMessages.length === 0) {
+        setMessages([{ role: "system", content: system }]);
+      }
       setLoaded(true);
-    });
+    })();
   }, []);
 
   /**
@@ -101,8 +120,8 @@ export function ChatView({
     resetTransient();
     currentIdRef.current = undefined;
     setCurrentId(undefined);
-    setMessages([{ role: "system", content: CHAT_SYSTEM }]);
-  }, [resetTransient]);
+    setMessages([{ role: "system", content: systemPrompt }]);
+  }, [resetTransient, systemPrompt]);
 
   /** 下拉里选中某条会话。开新对话请走 startNewChat，别复用这里的去重守卫 */
   const switchTo = useCallback(
@@ -314,6 +333,15 @@ export function ChatView({
           content={transcriptPlain(messages)}
           shortcut={{ modifiers: ["cmd", "opt"], key: "c" }}
         />
+      </ActionPanel.Section>
+
+      <ActionPanel.Section title="配置">
+        <Action
+          title="配置本命令的模型 / 思考强度"
+          icon={Icon.Gear}
+          onAction={openCommandPreferences}
+        />
+        <Action.Push title="自定义 Prompt" icon={Icon.Pencil} target={<ConfigureView />} />
       </ActionPanel.Section>
     </ActionPanel>
   );

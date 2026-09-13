@@ -3,18 +3,26 @@ import { useEffect, useState } from "react";
 import { imagePart, textPart, type ChatMessage } from "./lib/deepseek";
 import { prefs } from "./lib/config";
 import { IMAGE_SYSTEM } from "./lib/prompts";
+import { resolveSystemPrompt } from "./lib/prompt-config";
 import { isImagePath, toDataUri } from "./lib/images";
 import { ResultView } from "./components/result-view";
 
 export default function Command() {
   const [images, setImages] = useState<string[] | null>(null);
+  /** 这条命令生效的 system prompt（可能被 Configure Prompts 覆盖） */
+  const [systemPrompt, setSystemPrompt] = useState(IMAGE_SYSTEM);
   const [error, setError] = useState<string>();
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const items = await getSelectedFinderItems();
+        const [items, system] = await Promise.all([
+          getSelectedFinderItems(),
+          resolveSystemPrompt("ask-image", IMAGE_SYSTEM),
+        ]);
+        setSystemPrompt(system);
+
         const paths = items.map((item) => item.path).filter(isImagePath);
         if (paths.length === 0) {
           setError("请在 Finder 里选中一张图片（png / jpg / webp / gif / bmp）。");
@@ -39,7 +47,7 @@ export default function Command() {
             title="提问"
             onSubmit={({ question }: { question?: string }) => {
               setMessages([
-                { role: "system", content: IMAGE_SYSTEM },
+                { role: "system", content: systemPrompt },
                 {
                   role: "user",
                   content: [textPart(question?.trim() || "描述这张图片。"), ...images.map(imagePart)],
