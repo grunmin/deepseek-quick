@@ -25,6 +25,7 @@
   - [多轮对话](#多轮对话)
   - [Chat 预设（Preset）](#chat-预设preset)
   - [带着选区开聊](#带着选区开聊)
+  - [Agent（ACP）：把任务交给真正的 agent](#agentacp把任务交给真正的-agent)
   - [历史记录与继续对话](#历史记录与继续对话)
   - [数据安全与备份](#数据安全与备份)
 - [工作原理](#工作原理)
@@ -44,7 +45,9 @@
 - 在浏览器 / 编辑器 / PDF 里选中文字 → 按热键 → 直接看到结果，可以一键**替换原文**；
 - 手里有写好的 prompt → 选中它 → 按热键 **直接执行**，不用复制粘贴进对话；
 - 想追问就按 `⌘N` **继续讨论**，对话自动保存到**历史**里，随时能接着聊；
-- 在 Finder 里选中图片 → 也能直接提问（vision）。
+- 在 Finder 里选中图片 → 也能直接提问（vision）；
+- 想要的不只是「回答」而是「干活」→ 按热键唤起 **`Agent`**：对面是 dsh / codex 这类**真正的
+  agent**，会读文件、跑命令、改代码，工具调用按时间线渲染（走 [ACP](#agentacp把任务交给真正的-agent)，不用开浏览器和编辑器）。
 
 它和 Raycast 商店里的 ChatGPT 扩展最大的区别：**每个 prompt 都是 manifest 里的顶级命令**，
 所以每一条都能绑**原生全局热键**，不需要 Quicklink + deeplink（deeplink 会弹确认框，而且拿不到选中文本）。
@@ -61,6 +64,7 @@
 | 🎛 模型 / 强度按命令可配 | 全局默认之外，6 条 AI 命令各自可覆盖 Model 与思考强度 |
 | 📝 Prompt 可自定义 | `Configure Prompts` 命令多行编辑 system prompt，可一键恢复内置默认 |
 | 💬 多轮对话 | 搜索栏就是输入框，右侧 Markdown 对话区（最新一轮置顶，发完就能看到回答在长） |
+| 🛠 Agent（ACP） | 热键唤起，把任务交给**真正的 agent**（默认 dsh）：读文件、跑命令、改代码，工具调用按时间线渲染，审批弹原生对话框。走 ACP，换 agent 只改一条启动命令 |
 | 🖼 读图 | `Ask About Image` 或对话里附加图片 |
 | 📋 替换或复制 | 结果页主操作可直接替换选中的文本，或只复制 |
 | 🕘 历史记录 | 自动保存，可搜索、可续聊、可删除，本地存储不上云 |
@@ -157,6 +161,12 @@ prompt 也能整体替换 —— 见下一节。
 | **Translate To** | `中文` | 关闭「中英互译」后才生效，用来指定单一目标语言 |
 | **Reasoning** | 关 | 是否在结果里显示模型的思考链 |
 | **Output Behavior** | `replace` | 结果页主操作（`↵`）：替换选中文本 / 复制 |
+| **Agent Command** | `/bin/bash` | `Agent` 命令要启动的可执行文件 |
+| **Agent Arguments** | dsh 的 ACP 桥脚本 | 上面那个命令的参数。支持 `~` 与引号；指向任何**会说 ACP** 的 agent 都行 |
+| **Agent Working Directory** | 空（家目录） | agent 的工作目录，它的相对路径都基于这里。建议填你常改的项目目录 |
+
+> 后三项**只影响 `Agent` 命令**，跟前面那些「直连 DeepSeek API」的命令完全无关 ——
+> 那几条命令不需要、也不使用任何 agent。
 
 ## 按命令自定义（模型 / 思考强度 / Prompt）
 
@@ -217,6 +227,7 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 | `Ask About Image` | 对 Finder 里选中的图片提问 | `⌥G` |
 | `Chat` | 多轮对话，可附加图片 | `⌥C` |
 | `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（作为参考内容） | `⌥V` |
+| `Agent` | 唤起一个真正的 agent（默认 dsh），跑工具 / 改代码 / 执行任务 | `⌥X` |
 | `History` | 浏览历史对话并从任意一条继续 | — |
 | `Configure Prompts` | 按命令自定义 system prompt（多行） | — |
 | `Backup History` | 导出 / 导入对话历史，**设备迁移包**，并可抢救损坏数据 | — |
@@ -420,6 +431,64 @@ Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时�
 >
 > Finder 里选中图片且没选中文字时，图片会随参考内容一起挂上；发送后历史里存 `[图片]` 占位。
 
+### Agent（ACP）：把任务交给真正的 agent
+
+前面所有命令都是「选中文本 → 调一次对话补全 API」。`Agent` 不一样：它对面的
+**是一个 agent**（默认 dsh），会真的读文件、跑命令、改代码 —— 工具调用是这条链路里的
+一等公民，按时间线渲染出来，而不是藏在转圈的 loading 后面。
+
+```
+按热键  →  搜索栏输入任务  →  ↵
+         →  agent 开始干活：读文件 / 跑命令 / 写代码（每一步都看得见）
+         → 需要危险操作时弹原生审批对话框
+```
+
+**为什么是 ACP，不是再写一套 API 调用**：[ACP（Agent Client Protocol）](https://agentclientprotocol.com)
+是编辑器（Zed 等）和 agent 之间的标准线格式，dsh / codex 都已经会说。所以这里做的是一个
+**ACP 客户端**，换 agent 只要改扩展设置里的 **Agent Command / Agent Arguments** ——
+不用为一个新 agent 写适配层。
+
+#### 先决条件（dsh）
+
+默认配置指向 dsh 官方给 Zed 用的那条 ACP 启动脚本：
+
+```
+~/.dsh/profiles/acp-enhanced/node_modules/dsh-acp-enhanced/scripts/dsh-acp-zed.sh
+```
+
+装了 dsh 并且创建过 `acp-enhanced` profile 就有它（Zed 的 `agent_servers` 里通常已经配过一次）。
+用别的 agent，就把 **Agent Command** 指到它的 ACP 入口（例如 `codex-acp`），
+**Agent Arguments** 留空或填它的参数。
+
+> `Agent` 命令和 API Key 无关：它把活交给外部 agent，凭据由那个 agent 自己管。
+> 反过来，前面那些直连 API 的命令也用不到这三项 Agent 设置。
+
+#### 用起来是什么样
+
+| 操作 | 说明 |
+|---|---|
+| 搜索栏输入 → `↵` | 发送这一轮任务；跑着的时候同一个 `↵` 变成**打断**（agent 的会话状态经不起并发追发） |
+| 工具卡片 | `✅ bash · date` + 命令输出；文件编辑渲染成 `diff` 代码块；输出过长会截断并提示行数 |
+| 审批 | agent 要危险操作时弹 Raycast 原生对话框，**允许 / 拒绝**，结果写回 agent；弹窗期间 agent 会等你的答复 |
+| 会话下拉（`⌘P`） | 切换会话 / 开新会话。列表来自 agent 自己的会话存储 —— **dsh web / TUI 建的会话也在这里** |
+| `⌘K` → 会话配置 | 模型 / 推理强度 / 权限模式 / agent 预设。候选是 agent **实时报上来的**，不用在扩展里维护一份目录 |
+| `⌘K` → 斜杠命令 / 技能 | agent 声明的 `/命令`（dsh 的 skills 也在里面），选中即填进输入框 |
+| `⌘⇧C` / `⌘⌥C` | 复制本次回复 / 复制完整对话（含工具输出全文） |
+
+热键建议 `⌥X`。**只开一个窗口、不拉浏览器和编辑器** —— 这就是当初想要的那个东西。
+
+#### 默认的权限模式
+
+模式由 agent 那边决定（dsh 的默认是 `danger-full-access`，会直接动手不问你）。
+想更保守，就在 `⌘K` → 会话配置 → **权限模式** 里切 `read-only` / `workspace-write`；
+`read-only` 下写文件会触发审批请求，正好用来验证审批链路。
+
+#### 排在后面的事
+
+- 图片/截图作为上下文（`Agent` 目前只发文本；ACP 的 `promptCapabilities.image` 已经就绪）
+- 与快捷命令联动（比如「解释选中文本」的结果直接丢给 agent 继续做）
+- 常驻 daemon：现在一条命令 = 一个 agent 进程，冷启动 ~1s；常驻的话可以做到零等待
+
 ### 历史记录与继续对话
 
 - 只有 `Chat`（含从快捷命令转进来的对话）会写历史，存在 Raycast 的 `LocalStorage` 里。
@@ -582,6 +651,35 @@ cd deepseek-quick && npm install && npm run dev
 - **流式节流**：每 80ms 才 `setState` 一次并做去重，否则 Raycast 会警告
   「rendering a lot without any changes」，严重时会直接终止扩展。
 
+### Agent 命令（ACP 链路）
+
+```
+按热键 → AgentView
+        ├─ agentLaunch()：扩展偏好 → { command, args, cwd }（展开 ~、校验目录）
+        ├─ AcpClient.spawn()：一条命令 = 一个 agent 子进程
+        │     stdio 上跑 NDJSON + JSON-RPC 2.0
+        ├─ initialize → session/new（或 session/list → session/load 接回旧会话）
+        ├─ session/prompt ──┬─ session/update（流式文本 / 思考 / 工具卡片 / 用量）
+        │                   └─ session/request_permission（→ 原生确认框 → 回执）
+        └─ TranscriptModel.apply() → transcriptMarkdown() → Detail 面板
+```
+
+几个关键设计点：
+
+- **协议自己手写，不引 SDK**：ACP 的传输就是「一行一个 JSON」，没有 Content-Length 分帧。
+  `src/lib/acp/client.ts` 只依赖 node 内置模块 —— 这带来一个很实际的好处：
+  它能被 `npm run verify:acp` 直接编译执行，对着**真的 agent** 跑端到端回归，不用开 Raycast 手工点。
+- **客户端能力声明为「什么都不会」**：`fs` / `terminal` 都声明 `false`。这不是偷懒 ——
+  声明 `true` 意味着 agent 会把读写文件、跑命令**代理给客户端**（Zed 就是这么把编辑塞进自己的
+  diff 视图的）。面板不提供这些，让 agent 用它自己的工具闭环反而更简单，审批语义也更清楚。
+- **会话存在 agent 那边**：命令窗口关掉、子进程退出都不影响会话。下拉列表直接来自
+  `session/list`，`session/load` 接回来时 agent 会把历史用 `session/update` **重放**一遍
+  （实测重放 `user_message_chunk` + `agent_message_chunk`，不含工具调用）。
+- **审批请求只带 `toolCallId`**：线上不带工具详情，客户端必须自己按 id 回查刚才那条
+  `tool_call` —— 否则对话框上只有一串 uuid，用户不知道自己在批准什么。
+- **未知的 `sessionUpdate` 一律忽略**：ACP 在持续加新类型，写死联合会让「多一个字段就编译不过」，
+  忽略未知类型本身就是规范要求的行为。
+
 更深入的架构说明、硬性约束和踩坑记录见 **[AGENTS.md](./AGENTS.md)**。
 
 ## 排错
@@ -596,6 +694,9 @@ cd deepseek-quick && npm install && npm run dev
 | `HTTP 402` / 余额相关 | DeepSeek 账户余额不足 |
 | `HTTP 429` | 触发限流，稍后重试 |
 | 界面反复闪烁 / Raycast 警告重渲染 | 流式 `setState` 丢了去重，见 `src/lib/use-stream.ts` 的 `pushedContent` 逻辑 |
+| `Agent` 一直转圈 / 提示「agent 启动失败」 | 启动链是 `Raycast → bash → node → dsh → profile`，任何一环缺了都长这样。面板会带上子进程的 **stderr 尾巴**（`⌘K` → 重启 agent 可重看）；也看 `/tmp/dsq-debug.log` 里的 `agent/acp:` 与 `agent/stderr:` 行 |
+| `Agent` 提示工作目录不存在 | 扩展设置里的 **Agent Working Directory** 填了不存在的路径，或留空以外的相对路径 |
+| `Agent` 里读不到 dsh 的旧会话 | 会话列表来自 agent 的 `session/list`；只列同一次配置（同一 profile / 同一 DSH_HOME）下的会话 |
 | 想看清楚发生了什么 | 看 `/tmp/dsq-debug.log`（见下方「调试日志」） |
 
 ### 调试日志
@@ -621,6 +722,15 @@ tail -f /tmp/dsq-debug.log
 - `Ask About Image` 的结果页没有「换模型 / 强度重新生成」：换到不带 vision 的模型会直接失败
 - 长对话不做自动摘要，靠 DeepSeek 自己的上下文窗口
 - Raycast 扩展 API **没有真正的 sidebar**，会话列表只能用「左侧列表 + 右侧预览」（`List.isShowingDetail`）替代
+- `Agent` 命令一条命令 = 一个 agent 子进程：**关掉命令窗口就会把它杀掉**（会话本身存在 agent 那边，
+  下次用下拉接回来不会丢）；冷启动约 1 秒（握手 0.4s + 建会话 0.5s）
+- `Agent` 目前只发**纯文本**：图片、截图、当前选区都还没接（ACP 那边 `promptCapabilities.image`
+  已经可用，是这边没做）
+- 工具卡片是**渲染出来的 Markdown**：不是可点击的控件（Raycast 的详情面板本来就没有交互能力），
+  路径要去编辑器里打开得自己复制
+- `Agent` 的历史不在 Raycast 里：它用的是 **agent 自己的会话存储**（所以 dsh web / TUI 的会话
+  和它是同一份），因此也不走 `Backup History` 的迁移包
+- 只有会说 ACP 的 agent 能用：`codex-acp` 之类的桥没问题，纯 CLI（只会 `codex exec`）不行
 - 无法从 Raycast 商店安装（这是个人私有扩展）
 
 ## 开发
@@ -632,6 +742,7 @@ npm run build    # ray build -e dist：构建产物到 dist/
 npm run lint     # ray lint
 npm run fix-lint # ray lint --fix
 npm run verify   # 迁移模块的行为验证（Node 直接跑，不依赖 Raycast）
+npm run verify:acp  # ACP 客户端 / 渲染层 / 启动参数的行为验证
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
@@ -639,7 +750,13 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 > 内存版 `LocalStorage`，然后真跑「A 机器导出 → B 机器导入 → 撤销」全流程（含旧格式兼容、
 > 未知字段、id 冲突、损坏数据不覆盖等边界）。改迁移逻辑后请先跑它。
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 17 条**已修复、不要改回去**的硬性约束。
+> `npm run verify:acp` 分两段：先是渲染规则 / 回显与重放 / 参数切分的纯逻辑断言，
+> 然后**真的启动一个 agent** 跑完「握手 → 开会话 → 一问一答 → 工具调用 → 审批回执 →
+> 列会话 → 载入会话 → 取消」。`src/lib/acp/*` 刻意不引 `@raycast/api` 就是为了这个 ——
+> 协议层的回归不用开 Raycast 手工点。**这一段会消耗 token。**
+> 换 agent：`DSQ_ACP_LAUNCH=/path/to/agent node scripts/verify-acp.mjs`。
+
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 19 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
@@ -659,11 +776,17 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── presets.ts          Chat 预设 + 快捷命令的 Preset 回落解析（逐级回落）
 │   │   ├── migration.ts        设备迁移包：打包 / 解析 / 预览 / 撤销点
 │   │   ├── use-stream.ts       流式状态 hook（80ms 节流 + 去重）
+│   │   ├── acp/
+│   │   │   ├── client.ts        ACP 客户端：stdio 上手写 NDJSON + JSON-RPC（不引 SDK）
+│   │   │   ├── render.ts        session/update → 对话模型 → Markdown（工具卡片 / diff / 用量）
+│   │   │   ├── launch.ts        偏好 → spawn 三元组（展开 ~、切参数、校验 cwd）
+│   │   │   └── types.ts         用到的 ACP 线上类型的最小闭包
 │   │   └── debug.ts            追加写 /tmp/dsq-debug.log
 │   ├── components/
 │   │   ├── quick-action.tsx    读选中文本的通用外壳（解析本命令的 prompt）
 │   │   ├── result-view.tsx     快捷命令结果页（流式 + 替换/复制 + 继续讨论 + 换配置重新生成）
 │   │   ├── chat-view.tsx       多轮对话主界面
+│   │   ├── agent-view.tsx      Agent 面板（agent 进程 + 工具时间线 + 审批 + 会话切换）
 │   │   ├── history-view.tsx    两栏历史浏览器
 │   │   ├── prompt-config-view.tsx   Configure Prompts 界面
 │   │   ├── chat-presets-view.tsx    Chat Presets 管理界面
@@ -672,13 +795,17 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   ├── translate.tsx           │
 │   ├── rewrite.tsx             │
 │   ├── run-prompt.tsx          │
-│   ├── ask-image.tsx           │ 11 个命令入口，
+│   ├── ask-image.tsx           │ 12 个命令入口，
 │   ├── chat.tsx                │ 每个对应 package.json 里的一条 command
+│   ├── agent.tsx               │
 │   ├── chat-selection.tsx      │
 │   ├── history.tsx             │
 │   ├── configure.tsx           │
 │   ├── backup.tsx              │
 │   └── presets.tsx             ┘
+├── scripts/
+│   ├── verify-migration.mjs    迁移包的行为验证
+│   └── verify-acp.mjs          ACP 协议层的行为验证（含真实 agent 端到端）
 ├── package.json                扩展 manifest（命令、偏好、脚本）
 ├── tsconfig.json               TypeScript 配置
 └── AGENTS.md                   面向 AI / 贡献者的工程说明

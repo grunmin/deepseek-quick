@@ -10,7 +10,8 @@
 ## 项目一句话
 
 一个 macOS **Raycast 扩展**：读取当前选区文本（或 Finder 里的图片），直连 DeepSeek API，
-提供 解释 / 翻译 / 改写 / 看图 / 多轮对话，并本地保存历史。
+提供 解释 / 翻译 / 改写 / 看图 / 多轮对话，并本地保存历史；另有 **Agent 命令**通过
+**ACP** 唤起一个真正的 agent（默认 dsh，会读文件 / 跑命令 / 改代码）。
 
 ## 技术栈
 
@@ -20,8 +21,9 @@
 | UI | React 19 + `@raycast/api` 2.3.1（**没有 DOM / CSS**，只有 Raycast 组件） |
 | JSX | `react-jsx`（无需 `import React`） |
 | 构建 | Raycast CLI（内部用 esbuild），入口是 `package.json` 里的 `commands` |
-| 运行环境 | Raycast 桌面端内嵌的 Node 运行时；`node:fs` / `fetch` 均可用 |
-| 测试 | **无测试框架**。验证 = `npx tsc --noEmit` + `npm run lint` + 手动跑命令 |
+| 运行环境 | Raycast 桌面端内嵌的 Node 运行时；`node:fs` / `child_process` / `fetch` 均可用 |
+| Agent 集成 | **ACP**（Agent Client Protocol）：stdio 上的 NDJSON + JSON-RPC 2.0，手写，不引 SDK |
+| 测试 | **无测试框架**。验证 = `npx tsc --noEmit` + `npm run lint` + `npm run verify[:acp]` + 手动跑命令 |
 
 ## 常用命令
 
@@ -31,6 +33,8 @@ npm run dev        # ray develop：导入 Raycast + 热更新（日常开发用�
 npm run build      # ray build -e dist：构建到 dist/
 npm run lint       # ray lint
 npm run fix-lint   # ray lint --fix
+npm run verify     # 迁移模块行为验证（内存 LocalStorage，不碰网络）
+npm run verify:acp # ACP 协议层行为验证（后半段会真的启动 agent，消耗 token）
 npx tsc --noEmit   # 类型检查，CI 友好、无副作用
 ```
 
@@ -38,6 +42,7 @@ npx tsc --noEmit   # 类型检查，CI 友好、无副作用
 > `.gitignore` 里，**永远不要手动编辑它** —— 改 `package.json` 即可。
 >
 > **改完代码的验收顺序**：`npx tsc --noEmit` → `npm run lint` → 在 Raycast 里手动跑一遍对应命令。
+> 动了 `lib/acp/*` 就再加跑 `npm run verify:acp`（它是唯一能自动化验证协议交互的手段）。
 
 ## 查 Raycast 官方文档
 
@@ -79,18 +84,27 @@ src/
                      + 快捷命令用的 resolvePresetForRun() / listPresetRunOptions()
     migration.ts     设备迁移包：打包 / 解析 / 预览 / 应用 / 撤销点（换机迁移）
     use-stream.ts    useStream()：单次流式请求的 React hook（80ms 节流 + 去重）
+    acp/
+      types.ts       用到的 ACP 线上类型的最小闭包（字段一律可缺席）
+      client.ts      ACP 客户端：spawn agent + stdio 上手写 NDJSON/JSON-RPC（**不引 @raycast/api**）
+      render.ts      session/update → TranscriptModel → Markdown（工具卡片 / diff / 用量）
+      launch.ts      偏好 → spawn 三元组（展开 ~、切参数、校验 cwd）
     debug.ts         dbg()：追加写 /tmp/dsq-debug.log（临时调试用，可整体删除）
   components/
     quick-action.tsx 快捷命令通用外壳：读选区 + 解析本命令 prompt → 组装 messages → ResultView
     result-view.tsx  结果页：流式渲染 + 主操作（替换/复制）+ ⌘N 继续讨论 + 换配置重新生成
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
+    agent-view.tsx   Agent 面板：agent 进程 + 工具时间线 + 审批对话框 + 会话下拉
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
     chat-presets-view.tsx   Chat Presets 管理界面（List + Form）
     history-backup-view.tsx Backup History：导出 / 导入 / 迁移包 / 损坏抢救
   explain.tsx / translate.tsx / rewrite.tsx / run-prompt.tsx / ask-image.tsx / chat.tsx /
-  chat-selection.tsx / history.tsx / configure.tsx / backup.tsx / presets.tsx
-                                                    ← 11 个命令入口，文件名 = command name
+  agent.tsx / chat-selection.tsx / history.tsx / configure.tsx / backup.tsx / presets.tsx
+                                                    ← 12 个命令入口，文件名 = command name
+scripts/
+  verify-migration.mjs  迁移包行为验证（内存 LocalStorage）
+  verify-acp.mjs        ACP 协议层行为验证（纯逻辑 + **对着真 agent 跑端到端**）
 ```
 
 **入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
@@ -194,7 +208,31 @@ Chat with Selection（热键）
   （实测 `low` → 446）。
 - `result-view.tsx` 的 `formatUsage()` **只在非零时**才追加这两项，避免"看着像坏了"。
 
-### 6. 配置解析（模型 / 思考强度 / Prompt）
+### 6. Agent 链路（ACP）—— agent 命令
+
+这是本项目唯一「不直连 DeepSeek API」的链路：它把任务交给一个**外部 agent**（默认 dsh），
+用 [ACP](https://agentclientprotocol.com) 通信。跟前面几条链路没有共享代码，别混。
+
+```
+agent.tsx → <AgentView>
+  - 偏好 → agentLaunch()：{ command, args, cwd }（展开 ~、校验目录存在）
+  - AcpClient.spawn()：stdio 上的 NDJSON + JSON-RPC 2.0（child_process，一条命令一个进程）
+  - initialize → newSession(cwd)（或 session/list → session/load 接回旧会话）
+  - session/prompt(text)
+      ├─ 通知 session/update   → TranscriptModel.apply() → 节流 80ms → transcriptMarkdown() → Detail
+      └─ 请求 session/request_permission → confirmAlert → 回执 optionId / cancelled
+  - 卸载时 dispose()：SIGTERM 子进程（会话本身活在 agent 那边，不丢）
+```
+
+- 三个文件分工：`client.ts` 只管**线**（分帧 / 请求-回执 / 子进程生命周期），
+  `render.ts` 只管**模型与 Markdown**（纯函数、可单测），`launch.ts` 只管**偏好 → spawn 三元组**。
+- 会话级配置（模型 / 推理强度 / 权限预设 / agent 预设）**不在扩展里维护目录**：
+  agent 在 `session/new` 的响应和 `config_option_update` 里报上来，UI 只做展示与
+  `session/set_config_option` / `session/set_mode` 的回写。所以换 agent 不用改代码。
+- `fs` / `terminal` 能力一律声明 `false`（约束 19），所以 agent 用它自己的工具干活，
+  客户端只负责渲染它报上来的 `tool_call` / `tool_call_update`。
+
+### 7. 配置解析（模型 / 思考强度 / Prompt）
 
 三个维度的来源不同，改代码时别混：
 
@@ -484,6 +522,42 @@ Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），�
 > 「流式输出时看不到新内容」的根因就在这里：内容在长，视口在顶部不动。
 > 别去找 `scrollToBottom` 之类的 API，它不存在（`clearSearchBar()` 只能滚到**顶部**）。
 
+### 19. ACP 层的五条硬规则（全部实测踩过）
+
+1. **协议层不许引 `@raycast/api`**。`lib/acp/client.ts` / `render.ts` / `launch.ts` 只依赖 node
+   内置模块 —— 这是 `npm run verify:acp` 能**对着真 agent 跑端到端**的前提。视图需要的东西
+   由 `agent-view.tsx` 传进去（回调、偏好），别反过来在协议层里 import Raycast。
+2. **传输就是 NDJSON**：一行一个 JSON，`\n` 分帧，**没有** Content-Length 头。别照 LSP 的
+   样子加长度头，agent 会直接看不懂。
+3. **`clientCapabilities` 里 `fs` / `terminal` 一律 `false`**。声明 `true` 意味着 agent 会把
+   读写文件、跑命令**代理给客户端**（Zed 就是这么把编辑塞进自己的 diff 视图的）；
+   面板不提供这些，让它用自己的工具闭环，审批语义也更简单。
+4. **审批请求只带 `toolCallId`**，不带工具名/标题。必须用 `TranscriptModel.toolCalls` 按 id
+   回查，否则对话框上只有一串 uuid，用户不知道自己在批准什么。另外 ACP 规定：
+   `session/cancel` 之后，所有挂起的审批都要回 `{outcome:"cancelled"}`，否则 agent 会一直等
+   （`agent-view.tsx` 的 `pendingPermissionRef` 就是干这个的）。
+5. **未知的 `sessionUpdate` 必须忽略**，不能放进 `switch` 的 default 里抛错 ——
+   ACP 在持续加新类型，忽略未知类型本身就是规范要求的行为。
+
+另外一条**极易漏**的：`agentArgs` 里的 `~` 必须展开。spawn 不做 shell 展开，而默认参数就是
+`~/.dsh/.../dsh-acp-zed.sh` —— 漏掉的表现是「默认配置一启动就没反应」，错误还藏在子进程里。
+`resolveAcpLaunch()` 负责这件事，`verify-acp.mjs` 有对应断言。
+
+### 20. Agent 子进程的生命周期：一条命令一个进程，卸载必须收掉
+
+- **一条命令 = 一个 agent 子进程**。会话本身活在 agent 那边（`session/list` / `session/load`
+  能接回来），所以关窗口杀进程不会丢会话 —— 但也**必须**在 effect cleanup 里 `dispose()`，
+  否则用户每开一次命令就漏一个 agent 进程。
+- **异步启动流程用 lifecycle token 作废**（`lifecycleRef.current += 1`）。React StrictMode 会跑
+  `effect → cleanup → effect`，第一遍的启动流程可能还在 `initialize` 的 await 上；只用
+  `disposed` 布尔量会导致第二遍被第一遍的 late 结果覆盖，或子进程漏杀。
+  `agent-view.tsx` 的 `startAgent()` 里每处 await 之后都有 `if (stale()) { client.dispose(); return; }`。
+- **主动 `dispose()` 不算「异常退出」**：`client.dispose()` 会把 `exited` 置位，`onExit` 因此
+  不会再回调。`onExit` 里也要再判一次 `stale()`，否则关窗口时会闪一个假的「agent 退出了」。
+- **`prompt` 请求不设超时**（agent 跑工具可能好几分钟），但 `initialize` 设 30s：让
+  「agent 起不来」尽早报出来，而不是永远转圈。子进程一死，所有挂起请求会被立即 reject，
+  错误里带上 **stderr 尾巴** —— 那是排查启动失败的唯一线索。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -566,6 +640,29 @@ Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），�
 `src/lib/history.ts` 的 `MAX_CONVERSATIONS`。注意这是**整个数组**一起序列化，
 条数过多会让每次读写变慢。
 
+### 接一个新的 ACP agent（或把 dsh 换成别的）
+
+**代码通常不用改**，改扩展设置就行：
+
+| 设置 | codex（Zed 的 registry 版）示例 |
+|---|---|
+| Agent Command | `<codex-acp 可执行文件的绝对路径>` |
+| Agent Arguments | 留空 |
+| Agent Working Directory | 你的项目目录 |
+
+要点：
+
+1. **agent 必须会说 ACP**。`codex-acp`（Zed 的 ACP 适配器）、dsh 的 acp-enhanced 桥都行；
+   只会 `codex exec` 的裸 CLI **不行** —— ACP 是双向协议，不是一个命令行参数。
+2. 启动命令里写 `~` 会被 `resolveAcpLaunch()` 展开（spawn 本身不做 shell 展开，见约束 19）。
+3. 起来之后先看 `⌘K` → 会话配置里有没有选项：模型 / 权限模式都是 agent 报上来的，
+   报了就自动出现，`agent-view.tsx` 不需要为某个 agent 写特例。
+4. **`ask_user_question` 之类的 elicitation 目前会直接 decline**（客户端没声明这个能力）——
+   如果某个 agent 重度依赖它，得先实现 `elicitation/create` 的表单渲染，见 `client.ts` 的
+   `handleIncoming()`。
+5. 验证：`DSQ_ACP_LAUNCH=<你的 agent> node scripts/verify-acp.mjs`，端到端那一段能跑通就说明
+   协议面没问题。
+
 ## 数据模型速查
 
 ```ts
@@ -607,6 +704,55 @@ interface ResultRun {
 interface RunConfig { system: string; model: string; effort: Effort; presetId?: string; presetName?: string }
 /** Preset 在**快捷命令**里的回落基线（不是 Chat 的，见约束 17） */
 interface PresetRunBase { system: string; model: string; effort: Effort }
+
+/* ── Agent（ACP）链路 ── */
+
+/** 偏好 → spawn 三元组；args 已展开 ~、cwd 已校验存在 */
+interface AcpLaunch { command: string; args: string[]; cwd: string }
+
+/**
+ * 一次工具调用。`toolCalls` 这个 Map 是**必需的**：审批请求只带 toolCallId，
+ * 得靠它回查出「到底在批准什么」。
+ */
+interface ToolStep {
+  kind: "tool";
+  id: string;              // = ACP 的 toolCallId
+  name: string;            // bash / write / read …
+  title: string;           // agent 给的人类可读摘要
+  toolKind?: string;       // execute | edit | read | search | fetch
+  status: string;          // pending | in_progress | completed | failed
+  diff?: { path: string; oldText?: string | null; newText: string };
+  output?: string;         // 完整保留，截断只发生在渲染那一步
+  locations: string[];
+}
+interface TextStep { kind: "message" | "thought"; text: string }
+interface NoteStep { kind: "note"; text: string }
+type Step = ToolStep | TextStep | NoteStep;
+
+/** 一轮 = 你说的一句 + agent 干的一串事（消息 / 思考 / 工具，按到达顺序） */
+interface Turn {
+  user: string;
+  steps: Step[];
+  local: boolean;          // true = 本面板发起的；false = session/load 重放出来的
+  finished: boolean;
+  stopReason?: string;     // end_turn | cancelled | …
+  error?: string;
+  usage?: UsageSummary;
+}
+
+/** 可变模型：`apply(update)` 就地更新，视图靠节流重建 markdown 触发渲染 */
+class TranscriptModel {
+  turns: Turn[];
+  toolCalls: Map<string, ToolStep>;      // 审批回查用
+  configOptions: SessionConfigOptionWire[];  // 由 agent 报上来，不是本地目录
+  modes?: SessionModeStateWire;
+  commands: AvailableCommandWire[];
+  startReplay(): void;                   // session/load 前打开，决定 user_message_chunk 的语义
+  endReplay(): void;
+  startLocalTurn(user: string): Turn;
+  finishTurn(stopReason?: string, error?: string): void;
+  apply(update: SessionUpdateWire): void;
+}
 ```
 
 ## 调试
@@ -618,6 +764,10 @@ interface PresetRunBase { system: string; model: string; effort: Effort }
   里面能看到 endpoint / model / effort / 消息数 / HTTP 状态 / 返回长度 / token 用量。
 - **清理**：排查完想删掉日志机制，删 `src/lib/debug.ts` 及所有 `dbg(` 调用即可，无其它耦合。
 - **Raycast 开发者工具**：`npm run dev` 后可在 Raycast 里对扩展开 "Show Extension Logs"。
+- **Agent 链路**：`dbg()` 会写三类行 —— `agent:`（启动命令 / 握手 / 一轮结束）、
+  `agent/acp:`（每条 JSON-RPC 收发的摘要）、`agent/stderr:`（子进程 stderr，截断 300 字符）。
+  「agent 起不来」几乎总是从 `agent/stderr:` 里看出来的（比如 codex 的 config 解析错误）。
+  界面上 `⌘K` → 「重启 agent」也会把 stderr 尾巴直接贴在详情面板里。
 
 ## 代码风格与提交约定
 
@@ -628,7 +778,8 @@ interface PresetRunBase { system: string; model: string; effort: Effort }
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
   `feat(chat): ...` / `fix(stream): ...` / `docs: ...` / `refactor: ...` / `chore: ...`
 - 分支：`feat/*`、`fix/*`、`docs/*`。
-- **提交前必做**：`npx tsc --noEmit` 和 `npm run lint` 都通过；动了迁移逻辑再加跑 `npm run verify`。
+- **提交前必做**：`npx tsc --noEmit` 和 `npm run lint` 都通过；动了迁移逻辑再加跑 `npm run verify`；
+  动了 `lib/acp/*` 再加跑 `npm run verify:acp`（会启动真 agent 并消耗 token，但它是协议层唯一的回归网）。
 - **每次关键改动都要 commit & push**，并保持 `main` 与 `origin/main` 同步
   （`git status -sb` 应显示 `## main...origin/main`，没有 ahead/behind）。
   这是本仓库的明确约定 —— 不要攒着一堆改动不推。
@@ -639,8 +790,10 @@ interface PresetRunBase { system: string; model: string; effort: Effort }
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
 - [ ] 动了迁移 / 存储结构时，`npm run verify` 通过
+- [ ] 动了 `lib/acp/*` 时，`npm run verify:acp` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 18 条硬性约束
+- [ ] 没有触碰上面 20 条硬性约束
 - [ ] 新增 LocalStorage key 时，已按第 16 条登记进迁移包
-- [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name
+- [ ] 动了 `Agent` 时确认：卸载会 `dispose()` 子进程、`onExit` 不会误报「agent 退出了」
+- [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
