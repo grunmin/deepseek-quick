@@ -365,9 +365,17 @@ Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项�
 挪到 `…chat-presets.corrupted` 备份后返回 `[]`，**不**像历史那样拒绝写入。
 
 **内置预设**定义在 `lib/presets.ts` 的 `BUILTIN_PRESETS`（prompt 常量在 `lib/prompts.ts`），
-**只读**：UI 上只能「设为当前」和「复制为新的」。要加一档就同时改这两个文件。
-`BUILTIN_PRESETS[0]` 是特殊的「默认」——它的 `systemPrompt` 为 `undefined`，
-表示"用 Configure Prompts 里 Chat 的 prompt"，`model`/`effort` 也都是 `inherit`。
+要加一档就同时改这两个文件。`BUILTIN_PRESETS[0]` 是特殊的「默认」——`systemPrompt` 为
+`undefined`，表示"用 Configure Prompts 里 Chat 的 prompt"，`model`/`effort` 都是 `inherit`。
+
+内置预设**可被用户覆盖**（`BuiltinOverride`，键 `…chat-preset-overrides`）：
+`resolveBuiltinEffective()` 把代码默认值与覆盖合成"生效值"，`clearBuiltinOverride()` 恢复。
+⚠️ `model: ""`（显式选"跟随"）与 `model === undefined`（没覆盖）语义不同，别合并成一个判断。
+「默认」预设不提供覆盖入口 —— 它的 prompt / 模型 / 强度分别归 Configure Prompts 与命令设置管。
+
+**切换列表必须走 `listSwitchablePresets()`**（返回 `{ builtins, custom }`），
+不要在 UI 里直接遍历 `listPresets()` —— 那只含自定义预设，曾导致内置预设
+"管理页看得见、聊天页看不见"。这个函数就是为那条回归测试而存在的。
 
 ## 常见任务
 
