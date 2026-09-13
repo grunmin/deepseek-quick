@@ -211,7 +211,7 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 | `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（作为参考内容） | `⌥V` |
 | `History` | 浏览历史对话并从任意一条继续 | — |
 | `Configure Prompts` | 按命令自定义 system prompt（多行） | — |
-| `Backup History` | 导出 / 导入对话历史（JSON），并可抢救损坏数据 | — |
+| `Backup History` | 导出 / 导入对话历史，**设备迁移包**，并可抢救损坏数据 | — |
 | `Chat Presets` | 管理 Chat 预设（prompt / 模型 / 思考强度） | — |
 
 **设置热键**：Raycast 根搜索里输入命令名 → `⌘K` → **Configure Command** → **Record Hotkey**。
@@ -379,15 +379,18 @@ Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时�
 | **改 `package.json` 的 `name`** | ⚠️ **等于清空** | 扩展标识变了，存储命名空间跟着变，历史"凭空消失" |
 | 对话超过 **200 条** | ⚠️ 丢最旧的 | 上限写死在代码里，超出静默丢弃 |
 | 继续一条**带图**的旧对话 | ⚠️ 图丢了 | 历史里图片只存 `[图片]` 占位，模型看不到原图 |
-| 换机 / 重装系统 / 换 Raycast 账号 | ⚠️ **会丢** | 没有同步，数据只在这台机器上 |
+| 换机 / 重装系统 / 换 Raycast 账号 | ⚠️ 会丢，但**可迁移** | 没有同步，数据只在这台机器上 → 用 **设备迁移包**搬过去 |
 | 存储数据损坏 | ✅ **不会静默丢** | 进入**保护模式**：拒绝写入 + 自动备份原始数据 |
 
-**所以：定期跑 `Backup History` 导出。**
+**所以：定期跑 `Backup History` 导出。换机就导「设备迁移包」。**
 
 ```
 根搜索 → Backup History
 ├── 📊 状态                  对话数 / 占用体积 / 是否损坏
-├── 📤 导出到文件…            普通 JSON，可丢进 iCloud / Git / 网盘
+├── 📦 导出设备迁移包…        历史 + Preset + Prompt 覆盖，换机用这个
+├── 📥 导入设备迁移包…        先预览改动，确认后写入（带撤销点）
+├── ↩️ 撤销上一次导入          仅在刚导入过时出现
+├── 📤 导出到文件…            只导对话历史（旧格式，仍然兼容）
 ├── 📋 复制为 JSON            直接进剪贴板
 ├── 📥 从文件导入（合并）      按 id 合并，不会覆盖现有历史
 ├── 📂 在 Finder 中显示数据目录
@@ -411,6 +414,74 @@ Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时�
 > 那样下一次保存就会把原始数据**永久覆盖**。取而代之的是：拒绝所有写入、把原始字符串
 > 原样备份一份，并在 Chat 顶部和 `History` 里明确提示。
 > 这是刻意设计，不是 bug，别把它"优化"掉。
+
+### 换机迁移
+
+新机器上 `git clone` + `npm install` + `npm run dev` 之后，**代码有了，但数据没有** ——
+历史、Chat 预设、每条命令的 prompt 覆盖都存在 Raycast 的加密本地库里，不跟着代码走。
+
+用 **设备迁移包**（`Backup History → 📦 导出设备迁移包…`）把不可重建的部分一次搬过去：
+
+| 会带走 | 不会带走 |
+|---|---|
+| 对话历史 | **API Key** —— 密钥不该跟着文件走，新机器上重填更安全 |
+| 自定义 Chat Preset | Raycast 偏好设置（模型 / 思考强度 / 翻译方向…）—— 存在 Raycast 偏好库，没有导入接口，只能在设置里手填一次 |
+| 当前选中的 Preset | |
+| 内置 Preset 覆盖（资深模式 / 深度研究上改过的） | |
+| 各命令的 system prompt 覆盖 | |
+
+完整流程：
+
+```bash
+# ① 旧机器：确认代码已推上去
+git push
+
+# ② 新机器：装好代码
+git clone https://github.com/grunmin/deepseek-quick.git
+cd deepseek-quick && npm install && npm run dev
+
+# ③ 新机器：填一次 API Key（或用 DEEPSEEK_API_KEY / ~/.dsh/.credentials.yaml）
+
+# ④ 旧机器：Backup History → 📦 导出设备迁移包…（文件丢进 iCloud / U 盘 / 网盘）
+# ⑤ 新机器：Backup History → 📥 导入设备迁移包… → 选文件 → 看预览 → 确认
+```
+
+**导入是"合并 + 定向替换"，不是全量覆盖**，因为有些数据不能丢、有些必须能改：
+
+| 内容 | 规则 |
+|---|---|
+| 对话历史 | 按 `id` 合并，`updatedAt` 更新的胜出 —— **不会清空**本机现有历史 |
+| 自定义 Preset | 按 `id` 合并，同上 |
+| 命令 prompt 覆盖 | 包里有哪个命令就替换哪个，本机其余命令**保持原样** |
+| 内置 Preset 覆盖 | 同上，按预设 id 替换 |
+| 当前选中的 Preset | 包里指定了才改 |
+| 损坏历史的原始数据 | 仅在本机没有时恢复，**绝不覆盖**本机已有的抢救数据 |
+
+确认页会把这些改动逐条列出来，会覆盖本机配置的项标 ⚠️。写入前自动存一个**撤销点**，
+回到 `Backup History` 就能「撤销上一次导入」（只保留最近一次）。
+
+迁移包格式（普通 JSON，可读可手改；导入端同时兼容旧的「只有历史」文件）：
+
+```json
+{
+  "format": "deepseek-quick.migration",
+  "version": 1,
+  "exportedAt": 1757769600000,
+  "extension": "deepseek-quick",
+  "features": ["history", "presets", "activePreset", "presetOverrides", "promptOverrides"],
+  "payload": {
+    "history": { "format": "deepseek-quick.history", "version": 1, "exportedAt": 0, "conversations": [] },
+    "presets": [ { "id": "p_...", "name": "我的预设", "systemPrompt": "...", "effort": "high" } ],
+    "activePreset": "p_...",
+    "presetOverrides": { "__senior__": { "effort": "max" } },
+    "promptOverrides": { "explain": "只讲重点" }
+  }
+}
+```
+
+> 空的部分不会写进文件；`features` 只列出实际带上的段。导入端遇到不认识的段会**跳过并提示**，
+> 所以新版本导出的包拿到旧版本上不会静默丢数据冒充成功。
+> 实现见 `src/lib/migration.ts`，行为验证见 `npm run verify`。
 
 ## 工作原理
 
@@ -478,7 +549,8 @@ tail -f /tmp/dsq-debug.log
 ## 已知限制
 
 - 历史存在 Raycast 本地加密库，**不跨设备同步**（Cloud Sync 是 Raycast Pro 功能）；
-  定期用 `Backup History` 导出是唯一的备份手段
+  定期用 `Backup History` 导出；换机用**设备迁移包**（见[换机迁移](#换机迁移)）
+- API Key 和 Raycast 偏好**不进迁移包**：前者是密钥不该跟着文件走，后者存在 Raycast 偏好库里、没有导入接口
 - 历史最多保留 **200** 条，超出后丢弃最旧的
 - 改 `package.json` 的 `name` 等于换了一个扩展，已有历史会读不到（不是删了，是命名空间变了）
 - 历史里图片只存 `[图片]` 占位，继续带图旧对话时模型看不到原图
@@ -495,10 +567,15 @@ npm run dev      # ray develop：导入 Raycast + 热更新监听
 npm run build    # ray build -e dist：构建产物到 dist/
 npm run lint     # ray lint
 npm run fix-lint # ray lint --fix
+npm run verify   # 迁移模块的行为验证（Node 直接跑，不依赖 Raycast）
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 15 条**已修复、不要改回去**的硬性约束。
+> `npm run verify` 用 esbuild 把 `src/lib/migration.ts` 编成 CJS、把 `@raycast/api` 换成
+> 内存版 `LocalStorage`，然后真跑「A 机器导出 → B 机器导入 → 撤销」全流程（含旧格式兼容、
+> 未知字段、id 冲突、损坏数据不覆盖等边界）。改迁移逻辑后请先跑它。
+
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 16 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
@@ -516,6 +593,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── selection.ts        「当前选区」统一读取（文字 / Finder 图片）
 │   │   ├── prompt-config.ts    每命令 system prompt 覆盖（LocalStorage）
 │   │   ├── presets.ts          Chat 预设（prompt / 模型 / 强度）+ 逐级回落
+│   │   ├── migration.ts        设备迁移包：打包 / 解析 / 预览 / 撤销点
 │   │   ├── use-stream.ts       流式状态 hook（80ms 节流 + 去重）
 │   │   └── debug.ts            追加写 /tmp/dsq-debug.log
 │   ├── components/

@@ -334,6 +334,7 @@
   "scripts": {
     "build": "ray build -e dist",
     "dev": "ray develop",
+    "verify": "node scripts/verify-migration.mjs",
     "lint": "ray lint",
     "fix-lint": "ray lint --fix"
   },

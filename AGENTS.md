@@ -52,6 +52,7 @@ src/
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
     prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
     presets.ts       Chat 预设（prompt / model / effort）+ 逐级回落、损坏备份
+    migration.ts     设备迁移包：打包 / 解析 / 预览 / 应用 / 撤销点（换机迁移）
     use-stream.ts    useStream()：单次流式请求的 React hook（80ms 节流 + 去重）
     debug.ts         dbg()：追加写 /tmp/dsq-debug.log（临时调试用，可整体删除）
   components/
@@ -61,7 +62,7 @@ src/
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
     chat-presets-view.tsx   Chat Presets 管理界面（List + Form）
-    history-backup-view.tsx Backup History：导出 / 导入 / 损坏抢救
+    history-backup-view.tsx Backup History：导出 / 导入 / 迁移包 / 损坏抢救
   explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx / chat.tsx /
   chat-selection.tsx / history.tsx / configure.tsx / backup.tsx / presets.tsx
                                                     ← 10 个命令入口，文件名 = command name
@@ -377,6 +378,35 @@ Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项�
 不要在 UI 里直接遍历 `listPresets()` —— 那只含自定义预设，曾导致内置预设
 "管理页看得见、聊天页看不见"。这个函数就是为那条回归测试而存在的。
 
+### 16. 换机迁移：新增 LocalStorage key 时必须登记进迁移包
+
+Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），底层 `main.db` 还是加密的 ——
+外部工具读不了。所以 `Backup History` 的导出/导入是**唯一**能对抗「换机 / 重装 / 卸载」的手段。
+
+`lib/migration.ts` 负责把扩展存储里「不可重建的用户数据」打包成一个 JSON（设备迁移包）。
+**以后新增任何 LocalStorage key，都要判断它是否该进迁移包**，加进三处：
+
+1. `MIGRATION_FEATURES` 数组（同时是"哪些段合法"的白名单）
+2. `K` 映射 + `buildMigrationBundle()` 的打包分支
+3. `parseMigrationBundle()` 的 `switch` + `saveUndoPoint()` 的 key 列表
+
+**写导入逻辑时要守住这几条**（都有 `npm run verify` 覆盖）：
+
+- **合并 vs 替换要分清**：历史 / 自定义预设按 `id` 合并（`updatedAt` 新的胜），
+  prompt 覆盖 / 内置预设覆盖是**定向替换**（只覆盖包里带到的 key，本机其余保持原样）。
+  替换语义的部分必须在预览里逐条列给用户看。
+- **导入前存撤销点**。导入会改 6 个 key，写之前把它们的原始值全存进
+  `deepseek-quick.migration-undo`（用 `null` 表示"导入前不存在"，撤销时按 `delete` 处理）。
+  用掉即删，避免"撤销两次"把更早的状态写回来。
+- **认不出就抛错，绝不静默当空包**。否则用户以为导入成功、实际啥也没进来。
+  但**不认识的字段要跳过并提示**（`unknownSections`）—— 新版本导出的包拿到旧版本上时，
+  要明确告诉用户"这部分没带过来"，而不是假装全导入了。
+- **兼容旧格式**：`Backup History` 原来的"只有历史"文件（顶层 `conversations`）和裸数组
+  都必须继续能导入，走 `legacyHistoryOnly` 分支。
+- **不导出 API Key**。密钥不跟着文件走；Raycast 偏好存在偏好库里、也没有导入接口，一律不碰。
+
+改完跑 `npm run verify`（54 项断言：全流程 + 旧格式 + 未知字段 + id 冲突 + 撤销 + 损坏数据不覆盖 + 空包）。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -508,7 +538,7 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
 - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
   `feat(chat): ...` / `fix(stream): ...` / `docs: ...` / `refactor: ...` / `chore: ...`
 - 分支：`feat/*`、`fix/*`、`docs/*`。
-- **提交前必做**：`npx tsc --noEmit` 和 `npm run lint` 都通过。
+- **提交前必做**：`npx tsc --noEmit` 和 `npm run lint` 都通过；动了迁移逻辑再加跑 `npm run verify`。
 - **每次关键改动都要 commit & push**，并保持 `main` 与 `origin/main` 同步
   （`git status -sb` 应显示 `## main...origin/main`，没有 ahead/behind）。
   这是本仓库的明确约定 —— 不要攒着一堆改动不推。
@@ -518,7 +548,9 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
 
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
+- [ ] 动了迁移 / 存储结构时，`npm run verify` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 15 条硬性约束
+- [ ] 没有触碰上面 16 条硬性约束
+- [ ] 新增 LocalStorage key 时，已按第 16 条登记进迁移包
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name
