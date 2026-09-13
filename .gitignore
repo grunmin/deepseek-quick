@@ -1,0 +1,13 @@
+# 依赖
+node_modules
+
+# 构建产物
+dist
+
+# Raycast 本地状态 + 自动生成的文件（内容由 package.json 生成，不要提交）
+.raycast
+raycast-env.d.ts
+
+# 日志与系统文件
+*.log
+.DS_Store

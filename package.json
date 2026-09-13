@@ -1,0 +1,192 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "deepseek-quick",
+  "title": "DeepSeek Quick",
+  "description": "选中文本秒级解释 / 翻译 / 改写，支持后续多轮对话与历史记录。直连 DeepSeek API，思考强度可配。",
+  "icon": "icon.png",
+  "author": "runmin",
+  "categories": [
+    "Productivity",
+    "Developer Tools"
+  ],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "explain",
+      "title": "Explain Selection",
+      "subtitle": "DeepSeek",
+      "description": "解释选中的文本，可继续追问",
+      "mode": "view"
+    },
+    {
+      "name": "translate",
+      "title": "Translate Selection",
+      "subtitle": "DeepSeek",
+      "description": "把选中的文本翻译成目标语言",
+      "mode": "view"
+    },
+    {
+      "name": "rewrite",
+      "title": "Rewrite Selection",
+      "subtitle": "DeepSeek",
+      "description": "改写 / 润色选中的文本",
+      "mode": "view"
+    },
+    {
+      "name": "ask-image",
+      "title": "Ask About Image",
+      "subtitle": "DeepSeek",
+      "description": "对 Finder 中选中的图片提问（vision）",
+      "mode": "view"
+    },
+    {
+      "name": "chat",
+      "title": "Chat",
+      "subtitle": "DeepSeek",
+      "description": "多轮对话，支持附加图片",
+      "mode": "view"
+    },
+    {
+      "name": "chat-selection",
+      "title": "Chat with Selection",
+      "subtitle": "DeepSeek",
+      "description": "读当前选中的文字 / Finder 里的图片，开一段对话",
+      "mode": "view"
+    },
+    {
+      "name": "history",
+      "title": "History",
+      "subtitle": "DeepSeek",
+      "description": "浏览历史对话并从任意一条继续",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiKey",
+      "title": "API Key",
+      "description": "留空则依次回退到环境变量 DEEPSEEK_API_KEY、~/.dsh/.credentials.yaml",
+      "type": "password",
+      "required": false
+    },
+    {
+      "name": "apiEndpoint",
+      "title": "API Endpoint",
+      "description": "OpenAI 兼容端点，不要带 /chat/completions",
+      "type": "textfield",
+      "required": false,
+      "default": "https://api.deepseek.com/v1"
+    },
+    {
+      "name": "model",
+      "title": "Model",
+      "type": "textfield",
+      "required": false,
+      "default": "deepseek-flash"
+    },
+    {
+      "name": "quickActionEffort",
+      "title": "Quick Action Reasoning",
+      "description": "解释 / 翻译 / 改写 / 看图 用的思考强度",
+      "type": "dropdown",
+      "required": false,
+      "default": "none",
+      "data": [
+        {
+          "title": "None (不思考，最快)",
+          "value": "none"
+        },
+        {
+          "title": "Low",
+          "value": "low"
+        },
+        {
+          "title": "High",
+          "value": "high"
+        },
+        {
+          "title": "Max",
+          "value": "max"
+        }
+      ]
+    },
+    {
+      "name": "reasoningEffort",
+      "title": "Chat Reasoning",
+      "description": "Chat / 继续讨论 用的思考强度。none = 完全关闭思考",
+      "type": "dropdown",
+      "required": false,
+      "default": "low",
+      "data": [
+        {
+          "title": "None (关闭思考)",
+          "value": "none"
+        },
+        {
+          "title": "Low",
+          "value": "low"
+        },
+        {
+          "title": "High",
+          "value": "high"
+        },
+        {
+          "title": "Max",
+          "value": "max"
+        }
+      ]
+    },
+    {
+      "name": "translateTo",
+      "title": "Translate To",
+      "description": "Translate Selection 命令的目标语言",
+      "type": "textfield",
+      "required": false,
+      "default": "中文"
+    },
+    {
+      "name": "showReasoning",
+      "title": "Reasoning",
+      "label": "显示思考过程",
+      "description": "在结果上方显示模型的思考链",
+      "type": "checkbox",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "outputBehavior",
+      "title": "Output Behavior",
+      "description": "快捷命令输出结果时的默认动作",
+      "type": "dropdown",
+      "required": false,
+      "default": "replace",
+      "data": [
+        {
+          "title": "Replace Selection",
+          "value": "replace"
+        },
+        {
+          "title": "Copy to Clipboard",
+          "value": "copy"
+        }
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.5.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
