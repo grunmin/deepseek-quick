@@ -76,6 +76,28 @@ export function findBuiltin(id: string): BuiltinPreset | undefined {
   return BUILTIN_PRESETS.find((b) => b.id === id);
 }
 
+export interface SwitchablePreset {
+  id: string;
+  name: string;
+}
+
+/**
+ * 切换列表的数据源：**内置 + 自定义**，两者必须都给。
+ *
+ * 抽成函数是为了能被测试覆盖 —— 之前 `chat-view` 的 Submenu 只遍历了自定义预设
+ * （`listPresets()`），导致内置预设"管理页看得见、聊天页看不见"。
+ * 只要这个函数返回了内置，UI 就不可能再漏。
+ */
+export async function listSwitchablePresets(): Promise<{
+  builtins: SwitchablePreset[];
+  custom: SwitchablePreset[];
+}> {
+  return {
+    builtins: BUILTIN_PRESETS.map((b) => ({ id: b.id, name: b.name })),
+    custom: (await listPresets()).map((p) => ({ id: p.id, name: p.name })),
+  };
+}
+
 export interface ChatPreset {
   id: string;
   name: string;
@@ -232,6 +254,111 @@ export async function setActivePresetId(id: string): Promise<void> {
   await LocalStorage.setItem(ACTIVE_KEY, id);
 }
 
+/* ────────────────────── 内置预设的「覆盖」 ────────────────────── */
+
+/**
+ * 覆盖内置预设的哪些字段。
+ *
+ * - 字段**不存在**（`undefined`）= 没覆盖，用代码里的内置值
+ * - `model: ""` = 显式选择"跟随命令/全局"（与"没覆盖"区分开）
+ *
+ * 这和 `prompt-config.ts` 覆盖命令 prompt 是同一套思路：内置的永远在、可恢复，
+ * 用户改的只是叠在上面的一层。
+ */
+export interface BuiltinOverride {
+  systemPrompt?: string;
+  model?: string;
+  effort?: PresetEffort;
+}
+
+/** 内置预设套用覆盖之后的生效值 */
+export interface EffectiveBuiltin {
+  id: string;
+  name: string;
+  subtitle: string;
+  systemPrompt: string;
+  /** undefined = 跟随 Chat 命令 / 扩展全局 */
+  model?: string;
+  effort: PresetEffort;
+  /** 任意字段被覆盖过 */
+  hasOverride: boolean;
+}
+
+const OVERRIDES_KEY = "deepseek-quick.chat-preset-overrides";
+
+async function readOverrides(): Promise<Record<string, BuiltinOverride>> {
+  try {
+    const raw = await LocalStorage.getItem<string>(OVERRIDES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, BuiltinOverride>)
+      : {};
+  } catch (err) {
+    dbg(`preset overrides: 解析失败，按无覆盖处理 ${String(err).slice(0, 200)}`);
+    return {};
+  }
+}
+
+/** 写入前丢掉空覆盖，全空时删 key，避免留一堆 `{}` */
+async function writeOverrides(all: Record<string, BuiltinOverride>): Promise<void> {
+  const kept = Object.fromEntries(
+    Object.entries(all).filter(
+      ([, v]) => v && (v.systemPrompt?.trim() || v.model !== undefined || v.effort !== undefined),
+    ),
+  );
+  if (Object.keys(kept).length === 0) {
+    await LocalStorage.removeItem(OVERRIDES_KEY);
+    return;
+  }
+  await LocalStorage.setItem(OVERRIDES_KEY, JSON.stringify(kept));
+}
+
+export async function listBuiltinOverrides(): Promise<Record<string, BuiltinOverride>> {
+  return readOverrides();
+}
+
+export async function setBuiltinOverride(id: string, override: BuiltinOverride): Promise<void> {
+  const all = await readOverrides();
+  all[id] = override;
+  await writeOverrides(all);
+}
+
+/** 恢复内置默认（丢掉这个内置预设的全部覆盖） */
+export async function clearBuiltinOverride(id: string): Promise<void> {
+  const all = await readOverrides();
+  delete all[id];
+  await writeOverrides(all);
+}
+
+/**
+ * 内置预设的**生效值**：代码默认值 + 用户覆盖。
+ *
+ * 「默认」预设的 `systemPrompt` 在代码里是 `undefined`，表示"用 Configure Prompts 里
+ * Chat 的 prompt" —— 这里会把它解析成实际内容。
+ */
+export async function resolveBuiltinEffective(builtin: BuiltinPreset): Promise<EffectiveBuiltin> {
+  const override = await getBuiltinOverride(builtin.id);
+  const basePrompt = builtin.systemPrompt ?? (await resolveSystemPrompt("chat", CHAT_SYSTEM));
+
+  return {
+    id: builtin.id,
+    name: builtin.name,
+    subtitle: builtin.subtitle,
+    systemPrompt: override?.systemPrompt?.trim() ? override.systemPrompt : basePrompt,
+    // model 用 undefined 表示未覆盖；空串表示"显式跟随"
+    model: override?.model !== undefined ? override.model.trim() || undefined : builtin.model,
+    effort: override?.effort ?? builtin.effort,
+    hasOverride: Boolean(
+      override && (override.systemPrompt?.trim() || override.model !== undefined || override.effort !== undefined),
+    ),
+  };
+}
+
+async function getBuiltinOverride(id: string): Promise<BuiltinOverride | undefined> {
+  return (await readOverrides())[id];
+}
+
 /**
  * 解析当前生效的预设：把 model / effort 的"跟随"逐级回落好。
  *
@@ -241,44 +368,46 @@ export async function setActivePresetId(id: string): Promise<void> {
 export async function resolveActivePreset(): Promise<ResolvedChatPreset> {
   const p = prefs();
 
-  /** 内置「默认」：prompt 走 Configure Prompts 的 chat 覆盖，model / effort 走命令与全局 */
-  const asDefault = async (): Promise<ResolvedChatPreset> => ({
-    id: DEFAULT_PRESET_ID,
-    name: DEFAULT_PRESET_NAME,
-    systemPrompt: await resolveSystemPrompt("chat", CHAT_SYSTEM),
-    model: p.model,
-    effort: p.reasoningEffort,
-    isBuiltin: true,
+  /** 把"生效值"按 预设自身 → Chat 命令级 → 扩展全局 的顺序回落成可直接发请求的形式 */
+  const finalize = (
+    base: { id: string; name: string; systemPrompt: string; model?: string; effort: PresetEffort },
+    isBuiltin: boolean,
+  ): ResolvedChatPreset => ({
+    id: base.id,
+    name: base.name,
+    systemPrompt: base.systemPrompt,
+    model: base.model?.trim() || p.model,
+    effort: base.effort === "inherit" ? p.reasoningEffort : base.effort,
+    isBuiltin,
   });
 
   const activeId = await getActivePresetId();
-  if (activeId === DEFAULT_PRESET_ID) return asDefault();
 
-  // 其它内置预设：prompt 是写死的档位，model / effort 也写死；只有 inherit 才回落
   const builtin = findBuiltin(activeId);
-  if (builtin) {
-    return {
-      id: builtin.id,
-      name: builtin.name,
-      systemPrompt: builtin.systemPrompt ?? (await resolveSystemPrompt("chat", CHAT_SYSTEM)),
-      model: builtin.model?.trim() || p.model,
-      effort: builtin.effort === "inherit" ? p.reasoningEffort : builtin.effort,
-      isBuiltin: true,
-    };
-  }
+  if (builtin) return finalize(await resolveBuiltinEffective(builtin), true);
 
   const preset = await getPreset(activeId);
-  // 预设被删掉/读不出来 → 静默回落，不要让 Chat 打不开
-  if (!preset) return asDefault();
+  if (preset) {
+    return finalize(
+      {
+        id: preset.id,
+        name: preset.name,
+        systemPrompt: preset.systemPrompt.trim() || (await resolveSystemPrompt("chat", CHAT_SYSTEM)),
+        model: preset.model,
+        effort: preset.effort,
+      },
+      false,
+    );
+  }
 
-  return {
-    id: preset.id,
-    name: preset.name,
-    systemPrompt: preset.systemPrompt.trim() || (await resolveSystemPrompt("chat", CHAT_SYSTEM)),
-    model: preset.model?.trim() || p.model,
-    effort: preset.effort === "inherit" ? p.reasoningEffort : preset.effort,
-    isBuiltin: false,
-  };
+  // 预设被删掉 / 读不出来 → 静默回落内置「默认」，不要让 Chat 打不开
+  const fallback = findBuiltin(DEFAULT_PRESET_ID);
+  return finalize(
+    fallback
+      ? await resolveBuiltinEffective(fallback)
+      : { id: DEFAULT_PRESET_ID, name: DEFAULT_PRESET_NAME, systemPrompt: CHAT_SYSTEM, effort: "inherit" },
+    true,
+  );
 }
 
 /** 给内置预设生成一句话摘要 */

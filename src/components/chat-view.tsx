@@ -15,12 +15,11 @@ import { CHAT_SYSTEM } from "../lib/prompts";
 import { dbg } from "../lib/debug";
 import { toDataUri } from "../lib/images";
 import {
-  DEFAULT_PRESET_ID,
-  listPresets,
+  listSwitchablePresets,
   resolveActivePreset,
   setActivePresetId,
-  type ChatPreset,
   type ResolvedChatPreset,
+  type SwitchablePreset,
 } from "../lib/presets";
 import { HistoryView } from "./history-view";
 import { ChatPresetsView } from "./chat-presets-view";
@@ -79,8 +78,11 @@ export function ChatView({
   const [saveError, setSaveError] = useState<string>();
   /** 当前生效的 Chat 预设（内置「默认」或某个自定义预设） */
   const [preset, setPreset] = useState<ResolvedChatPreset | null>(null);
-  /** 预设列表，供 ⌘K → 切换 Preset 的 Submenu 使用 */
-  const [presetList, setPresetList] = useState<ChatPreset[]>([]);
+  /** 切换 Preset 的候选：内置 + 自定义（走 listSwitchablePresets，别只取自定义的） */
+  const [switcher, setSwitcher] = useState<{ builtins: SwitchablePreset[]; custom: SwitchablePreset[] }>({
+    builtins: [],
+    custom: [],
+  });
 
   /**
    * `run()` 是 `useCallback([], ...)`，闭包里的 `preset` 会永远停在首次渲染的 `null`。
@@ -111,13 +113,13 @@ export function ChatView({
       const [history, resolved, presets] = await Promise.all([
         readHistory(),
         resolveActivePreset(),
-        listPresets(),
+        listSwitchablePresets(),
       ]);
       setConversations(history.conversations);
       setHistoryCorrupted(history.corrupted);
       presetRef.current = resolved;
       setPreset(resolved);
-      setPresetList(presets);
+      setSwitcher(presets);
       // 没有从外部带进来的对话（新开一段）时，用当前预设的 prompt 当 system
       if (!initialMessages || initialMessages.length === 0) {
         setMessages([{ role: "system", content: resolved.systemPrompt }]);
@@ -156,7 +158,7 @@ export function ChatView({
 
   /** 预设管理界面改过东西后，刷新 Submenu 里的列表 */
   const reloadPresets = useCallback(async () => {
-    setPresetList(await listPresets());
+    setSwitcher(await listSwitchablePresets());
   }, []);
 
   /**
@@ -362,14 +364,19 @@ export function ChatView({
 
       {/* 预设切换走 Submenu（搜索栏那个位置只能放一个 Dropdown，已经被会话占用） */}
       <ActionPanel.Submenu title={`切换 Preset（${preset?.name ?? "默认"}）`} icon={Icon.Switch}>
-        <Action
-          title="默认"
-          icon={preset?.id === DEFAULT_PRESET_ID ? Icon.CheckCircle : Icon.Circle}
-          onAction={() => switchPreset(DEFAULT_PRESET_ID)}
-        />
-        {presetList.length > 0 ? (
+        <ActionPanel.Section title="内置">
+          {switcher.builtins.map((item) => (
+            <Action
+              key={item.id}
+              title={item.name}
+              icon={preset?.id === item.id ? Icon.CheckCircle : Icon.Circle}
+              onAction={() => switchPreset(item.id)}
+            />
+          ))}
+        </ActionPanel.Section>
+        {switcher.custom.length > 0 ? (
           <ActionPanel.Section title="自定义">
-            {presetList.map((item) => (
+            {switcher.custom.map((item) => (
               <Action
                 key={item.id}
                 title={item.name}

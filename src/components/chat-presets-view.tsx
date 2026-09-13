@@ -12,19 +12,21 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
-import { resolveSystemPrompt } from "../lib/prompt-config";
 import {
   BUILTIN_PRESETS,
   DEFAULT_PRESET_ID,
+  clearBuiltinOverride,
   deletePreset,
-  describeBuiltin,
   describePreset,
   getActivePresetId,
   listPresets,
+  resolveBuiltinEffective,
   setActivePresetId,
+  setBuiltinOverride,
   upsertPreset,
   type BuiltinPreset,
   type ChatPreset,
+  type EffectiveBuiltin,
   type PresetEffort,
 } from "../lib/presets";
 import { CHAT_SYSTEM } from "../lib/prompts";
@@ -40,19 +42,26 @@ const BUILTIN_ICON: Record<string, Icon> = {
 /**
  * Chat 预设管理：每个预设 = 一套 system prompt + 模型 + 思考强度。
  *
- * 内置预设是**只读**的（开箱即用），想改就「复制为新的」变成可编辑的自定义预设。
- * `onChanged` 用于被 Chat 内嵌打开时通知父级刷新 Submenu 列表。
+ * - **自定义预设**：随便增删改
+ * - **内置预设**：永远在、可恢复。prompt / 模型 / 强度都能改，改动以「覆盖」的形式
+ *   叠在内置值之上（和 `prompt-config.ts` 覆盖命令 prompt 是同一套思路）
+ * - **「默认」预设**例外：它代表"让 Chat 用它原本的配置"，prompt 归 Configure Prompts 管，
+ *   模型与强度归 Chat 命令级偏好管，所以这里不提供覆盖入口
  */
 export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promise<void> } = {}) {
   const [presets, setPresets] = useState<ChatPreset[] | null>(null);
+  const [builtins, setBuiltins] = useState<EffectiveBuiltin[] | null>(null);
   const [activeId, setActiveId] = useState<string>(DEFAULT_PRESET_ID);
-  /** 内置「默认」预设实际用的 prompt（来自 Configure Prompts） */
-  const [builtinPrompt, setBuiltinPrompt] = useState(CHAT_SYSTEM);
 
   const reload = useCallback(async () => {
-    setPresets(await listPresets());
-    setActiveId(await getActivePresetId());
-    setBuiltinPrompt(await resolveSystemPrompt("chat", CHAT_SYSTEM));
+    const [list, active, effective] = await Promise.all([
+      listPresets(),
+      getActivePresetId(),
+      Promise.all(BUILTIN_PRESETS.map(resolveBuiltinEffective)),
+    ]);
+    setPresets(list);
+    setActiveId(active);
+    setBuiltins(effective);
   }, []);
 
   useEffect(() => {
@@ -73,10 +82,36 @@ export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promis
     [notifyChanged],
   );
 
-  const loading = presets === null;
+  /**
+   * 保存内置预设的覆盖。若改完之后和内置值**完全一样**，就把覆盖删掉 ——
+   * 这样"打开表单直接保存"不会把内置值固化成一份副本。
+   */
+  const saveBuiltinOverride = useCallback(
+    async (
+      builtin: BuiltinPreset,
+      values: { systemPrompt: string; model?: string; effort: PresetEffort },
+      onDone: () => Promise<void>,
+    ) => {
+      const samePrompt = values.systemPrompt.trim() === (builtin.systemPrompt ?? "").trim();
+      const sameModel = (values.model?.trim() || undefined) === (builtin.model?.trim() || undefined);
+      const sameEffort = values.effort === builtin.effort;
 
-  /** 内置「默认」的 prompt 来自 Configure Prompts，其余内置是写死的 */
-  const promptOf = (builtin: BuiltinPreset) => builtin.systemPrompt ?? builtinPrompt;
+      if (samePrompt && sameModel && sameEffort) {
+        await clearBuiltinOverride(builtin.id);
+      } else {
+        await setBuiltinOverride(builtin.id, {
+          systemPrompt: values.systemPrompt,
+          model: values.model,
+          effort: values.effort,
+        });
+      }
+      await onDone();
+    },
+    [],
+  );
+
+  const loading = presets === null || builtins === null;
+  const effectiveById = new Map((builtins ?? []).map((b) => [b.id, b]));
 
   return (
     <List
@@ -85,39 +120,44 @@ export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promis
       navigationTitle="Chat Presets"
       searchBarPlaceholder="管理 Chat 预设（prompt / 模型 / 思考强度）"
     >
-      <List.Section title="内置" subtitle="开箱即用 · 只读，想改就「复制为新的」">
+      <List.Section title="内置" subtitle="永远在 · 可直接编辑，也可恢复内置默认">
         {BUILTIN_PRESETS.map((builtin) => {
+          const eff = effectiveById.get(builtin.id);
           const active = builtin.id === activeId;
           const isDefault = builtin.id === DEFAULT_PRESET_ID;
-          const prompt = promptOf(builtin);
+          if (!eff) return null;
+
+          const accessories: List.Item.Accessory[] = [];
+          if (eff.hasOverride) accessories.push({ tag: { value: "已自定义", color: Color.Orange } });
+          if (active) accessories.push({ tag: { value: "使用中", color: Color.Green } });
 
           return (
             <List.Item
               key={builtin.id}
               id={builtin.id}
               icon={active ? Icon.CheckCircle : (BUILTIN_ICON[builtin.id] ?? Icon.Circle)}
-              title={builtin.name}
+              title={eff.name}
               subtitle={builtin.subtitle}
-              accessories={active ? [{ tag: { value: "使用中", color: Color.Green } }] : []}
+              accessories={accessories}
               detail={
                 <List.Item.Detail
-                  markdown={promptMarkdown(builtin.name, prompt)}
+                  markdown={promptMarkdown(eff.name, eff.systemPrompt)}
                   metadata={
                     <List.Item.Detail.Metadata>
                       <List.Item.Detail.Metadata.Label
                         title="Model"
-                        text={builtin.model?.trim() || "跟随 Chat 命令 / 扩展全局"}
+                        text={eff.model?.trim() || "跟随 Chat 命令 / 扩展全局"}
                       />
                       <List.Item.Detail.Metadata.Label
                         title="Reasoning"
-                        text={builtin.effort === "inherit" ? "跟随 Chat 命令 / 扩展全局" : builtin.effort}
+                        text={eff.effort === "inherit" ? "跟随 Chat 命令 / 扩展全局" : eff.effort}
                       />
                       <List.Item.Detail.Metadata.Label
                         title="Prompt 来源"
-                        text={builtin.systemPrompt ? "内置（只读）" : "Configure Prompts → Chat"}
+                        text={isDefault ? "Configure Prompts → Chat" : eff.hasOverride ? "内置 + 你的覆盖" : "内置"}
                       />
                       <List.Item.Detail.Metadata.Separator />
-                      <List.Item.Detail.Metadata.Label title="一句话" text={describeBuiltin(builtin)} />
+                      <List.Item.Detail.Metadata.Label title="状态" text={eff.hasOverride ? "已自定义" : "内置默认"} />
                     </List.Item.Detail.Metadata>
                   }
                 />
@@ -127,33 +167,75 @@ export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promis
                   <Action
                     title="设为当前 Preset"
                     icon={Icon.CheckCircle}
-                    onAction={() => activate(builtin.id, builtin.name)}
+                    onAction={() => activate(builtin.id, eff.name)}
                   />
+
+                  {isDefault ? (
+                    // 「默认」= 让 Chat 用它原本的配置：prompt 去 Configure Prompts 改，
+                    // 模型/强度去命令设置改，所以这里不给覆盖入口
+                    <Action.Push
+                      title="编辑它的 Prompt（Configure Prompts）"
+                      icon={Icon.Pencil}
+                      target={<ConfigureView />}
+                    />
+                  ) : (
+                    <Action.Push
+                      title="编辑（覆盖内置）"
+                      icon={Icon.Pencil}
+                      target={
+                        <PresetForm
+                          showName={false}
+                          navigationTitle={`编辑「${eff.name}」`}
+                          submitTitle="保存覆盖"
+                          initial={{
+                            systemPrompt: eff.systemPrompt,
+                            model: eff.model,
+                            effort: eff.effort,
+                          }}
+                          onSubmit={(values) => saveBuiltinOverride(builtin, values, notifyChanged)}
+                        />
+                      }
+                    />
+                  )}
+
+                  {eff.hasOverride ? (
+                    <Action
+                      title="恢复内置默认"
+                      icon={Icon.ArrowCounterClockwise}
+                      onAction={async () => {
+                        await clearBuiltinOverride(builtin.id);
+                        await notifyChanged();
+                        await showToast({ style: Toast.Style.Success, title: `已恢复「${eff.name}」的内置默认` });
+                      }}
+                    />
+                  ) : null}
+
                   <Action.Push
                     title="复制为新的（可编辑）"
                     icon={Icon.CopyClipboard}
                     target={
                       <PresetForm
+                        navigationTitle="复制为新预设"
+                        submitTitle="创建"
                         initial={{
-                          name: `${builtin.name} 副本`,
-                          systemPrompt: prompt,
-                          model: builtin.model,
-                          effort: builtin.effort,
+                          name: `${eff.name} 副本`,
+                          systemPrompt: eff.systemPrompt,
+                          model: eff.model,
+                          effort: eff.effort,
                         }}
-                        onDone={notifyChanged}
+                        onSubmit={async (values) => {
+                          await upsertPreset({
+                            name: values.name,
+                            systemPrompt: values.systemPrompt,
+                            model: values.model,
+                            effort: values.effort,
+                          });
+                          await notifyChanged();
+                        }}
                       />
                     }
                   />
-                  <Action.Push title="新建 Preset…" icon={Icon.Plus} target={<PresetForm onDone={notifyChanged} />} />
-                  {isDefault ? (
-                    <ActionPanel.Section>
-                      <Action.Push
-                        title="编辑「默认」的 Prompt（Configure Prompts）"
-                        icon={Icon.Pencil}
-                        target={<ConfigureView />}
-                      />
-                    </ActionPanel.Section>
-                  ) : null}
+                  <Action.Push title="新建 Preset…" icon={Icon.Plus} target={<NewPresetForm onDone={notifyChanged} />} />
                 </ActionPanel>
               }
             />
@@ -203,16 +285,45 @@ export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promis
                   <Action.Push
                     title="编辑"
                     icon={Icon.Pencil}
-                    target={<PresetForm initial={preset} editingId={preset.id} onDone={notifyChanged} />}
+                    target={
+                      <PresetForm
+                        navigationTitle={`编辑「${preset.name}」`}
+                        submitTitle="保存"
+                        initial={preset}
+                        onSubmit={async (values) => {
+                          await upsertPreset({
+                            id: preset.id,
+                            name: values.name,
+                            systemPrompt: values.systemPrompt,
+                            model: values.model,
+                            effort: values.effort,
+                          });
+                          await notifyChanged();
+                        }}
+                      />
+                    }
                   />
                   <Action.Push
                     title="复制为新的"
                     icon={Icon.CopyClipboard}
                     target={
-                      <PresetForm initial={{ ...preset, name: `${preset.name} 副本` }} onDone={notifyChanged} />
+                      <PresetForm
+                        navigationTitle="复制为新预设"
+                        submitTitle="创建"
+                        initial={{ ...preset, name: `${preset.name} 副本` }}
+                        onSubmit={async (values) => {
+                          await upsertPreset({
+                            name: values.name,
+                            systemPrompt: values.systemPrompt,
+                            model: values.model,
+                            effort: values.effort,
+                          });
+                          await notifyChanged();
+                        }}
+                      />
                     }
                   />
-                  <Action.Push title="新建 Preset…" icon={Icon.Plus} target={<PresetForm onDone={notifyChanged} />} />
+                  <Action.Push title="新建 Preset…" icon={Icon.Plus} target={<NewPresetForm onDone={notifyChanged} />} />
                   <ActionPanel.Section>
                     <Action
                       title="删除"
@@ -243,65 +354,91 @@ export function ChatPresetsView({ onChanged }: { onChanged?: () => void | Promis
   );
 }
 
+/** 新建空白预设 */
+function NewPresetForm({ onDone }: { onDone: () => Promise<void> }) {
+  return (
+    <PresetForm
+      navigationTitle="新建 Preset"
+      submitTitle="创建"
+      onSubmit={async (values) => {
+        await upsertPreset({
+          name: values.name,
+          systemPrompt: values.systemPrompt,
+          model: values.model,
+          effort: values.effort,
+        });
+        await onDone();
+      }}
+    />
+  );
+}
+
 /**
- * 新建 / 编辑表单。
- *
- * 用 `initial` + `editingId` 而不是整个 `ChatPreset` —— 因为「从内置复制」时
- * 没有 id 也没有 createdAt/updatedAt，硬凑一个假 ChatPreset 很容易写错。
+ * 预设表单。同时服务三种场景，靠 props 区分而不是塞假数据：
+ *   - 新建 / 编辑自定义预设 → `showName`，`onSubmit` 里调 `upsertPreset`
+ *   - 覆盖内置预设           → `showName={false}`（名字固定），`onSubmit` 里写覆盖
  */
 function PresetForm({
   initial,
-  editingId,
-  onDone,
+  showName = true,
+  navigationTitle,
+  submitTitle,
+  onSubmit,
 }: {
   initial?: { name?: string; systemPrompt?: string; model?: string; effort?: PresetEffort };
-  editingId?: string;
-  onDone: () => Promise<void>;
+  showName?: boolean;
+  navigationTitle: string;
+  submitTitle: string;
+  onSubmit: (values: {
+    name: string;
+    systemPrompt: string;
+    model?: string;
+    effort: PresetEffort;
+  }) => Promise<void>;
 }) {
   const { pop } = useNavigation();
-  const isEdit = Boolean(editingId);
 
   return (
     <Form
-      navigationTitle={isEdit ? `编辑「${initial?.name}」` : "新建 Preset"}
+      navigationTitle={navigationTitle}
       actions={
         <ActionPanel>
           <Action.SubmitForm
-            title={isEdit ? "保存" : "创建"}
+            title={submitTitle}
             onSubmit={async (values: { name?: string; prompt?: string; model?: string; effort?: string }) => {
-              const name = values.name?.trim();
-              if (!name) {
+              const name = showName ? values.name?.trim() : (initial?.name ?? "未命名");
+              if (showName && !name) {
                 await showToast({ style: Toast.Style.Failure, title: "请填一个名称" });
                 return;
               }
-              await upsertPreset({
-                id: editingId,
-                name,
+              await onSubmit({
+                name: name || "未命名",
                 systemPrompt: values.prompt ?? "",
                 model: values.model,
                 effort: (values.effort ?? "inherit") as PresetEffort,
               });
-              await onDone();
-              await showToast({ style: Toast.Style.Success, title: isEdit ? "已保存" : `已创建「${name}」` });
+              await showToast({ style: Toast.Style.Success, title: `${submitTitle}成功` });
               pop();
             }}
           />
         </ActionPanel>
       }
     >
-      <Form.TextField
-        id="name"
-        title="名称"
-        placeholder="例如：代码审查 / 翻译润色 / 苏格拉底式提问"
-        defaultValue={initial?.name}
-        autoFocus
-      />
+      {showName ? (
+        <Form.TextField
+          id="name"
+          title="名称"
+          placeholder="例如：代码审查 / 翻译润色 / 苏格拉底式提问"
+          defaultValue={initial?.name}
+          autoFocus
+        />
+      ) : null}
       <Form.TextArea
         id="prompt"
         title="System Prompt"
         placeholder={CHAT_SYSTEM}
         defaultValue={initial?.systemPrompt ?? CHAT_SYSTEM}
-        info="支持多行"
+        info="支持多行。改回与内置完全一致时，覆盖会自动清除。"
       />
       <Form.TextField
         id="model"
