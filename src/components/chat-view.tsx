@@ -27,6 +27,13 @@ import { ConfigureView } from "./prompt-config-view";
 
 const FLUSH_INTERVAL_MS = 80;
 const NEW_CHAT_ID = "__new__";
+/**
+ * 发送时让详情面板"归位到顶部"的那次短渲染要持续多久。
+ *
+ * 不能是 0：Raycast 的详情面板要先真的渲染出这段短内容，滚动位置才会被钳到 0（见
+ * `scrollToTopOnSend`）。200ms 是实测够用又基本看不出来的值。
+ */
+const SCROLL_RESET_MS = 200;
 
 interface Pending {
   content: string;
@@ -70,6 +77,8 @@ export function ChatView({
   );
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState<string>();
+  /** 发送瞬间那次"把面板顶回顶部"的渲染，此时只渲染最新一轮、不带历史 */
+  const [pinnedToTop, setPinnedToTop] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loaded, setLoaded] = useState(false);
   /** 历史数据损坏时为 true：此时禁止写入，并在界面上明确提示 */
@@ -297,6 +306,22 @@ export function ChatView({
     }
   }, []);
 
+  /**
+   * 发送时把详情面板带回顶部（跟 `transcriptMarkdown` 的「最新一轮置顶」配套）。
+   *
+   * Raycast 的 `List.Item.Detail` **没有滚动 API**，滚动位置是"绝对值 + 不跟随"：
+   * 内容在下方增长时视口一动不动（实测），把内容插到顶部也没有 scroll anchoring；
+   * 能改变滚动位置的只有两件事 —— 用户自己滚，以及**内容短到不需要滚动时被强制钳到 0**。
+   * 所以这里先渲染一段"只有最新一轮"的短内容，让面板归零，再渲染完整内容。
+   *
+   * 只在用户按 ↵ 这一次做：流式过程中绝不干预，否则会把正在往上翻历史的用户拽走。
+   */
+  const scrollToTopOnSend = useCallback(async () => {
+    setPinnedToTop(true);
+    await new Promise((resolve) => setTimeout(resolve, SCROLL_RESET_MS));
+    setPinnedToTop(false);
+  }, []);
+
   const send = useCallback(
     async (text: string, images: string[] = []) => {
       const allImages = [...attachedImages, ...images];
@@ -324,9 +349,10 @@ export function ChatView({
       setReferenceBlock(null);
       const next: ChatMessage[] = [...messages, ...withReference];
       setMessages(next);
+      await scrollToTopOnSend();
       await run(next);
     },
-    [attachedImages, messages, referenceBlock, run],
+    [attachedImages, messages, referenceBlock, run, scrollToTopOnSend],
   );
 
   /** 不想提问、只想让模型看/分析参考内容时，直接把它发出去 */
@@ -337,12 +363,13 @@ export function ChatView({
     setReferenceBlock(null);
     const next: ChatMessage[] = [...messages, { role: "user", content: wrapped }];
     setMessages(next);
+    await scrollToTopOnSend();
     await run(next);
-  }, [messages, referenceBlock, run]);
+  }, [messages, referenceBlock, run, scrollToTopOnSend]);
 
   const transcript = [
     historyCorrupted ? CORRUPTED_NOTICE : "",
-    transcriptMarkdown(messages, pending, error, referenceBlock),
+    transcriptMarkdown(messages, pending, error, referenceBlock, { history: !pinnedToTop }),
     saveError ? saveFailureNotice(saveError) : "",
   ]
     .filter(Boolean)
@@ -602,32 +629,97 @@ function transcriptPlain(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
-function transcriptMarkdown(
-  messages: ChatMessage[],
-  pending: Pending | null,
-  error: string | undefined,
-  reference: ReferenceBlock | null,
-): string {
-  const blocks: string[] = [];
+/** 一轮对话：你问 + DeepSeek 答（回答可能还没有，比如正在流式生成） */
+interface Turn {
+  user?: string;
+  assistant?: string;
+  reasoning?: string;
+}
 
-  if (reference) blocks.push(referenceMarkdown(reference));
+/**
+ * 把消息列表切成"轮"，`pending`（流式中间态）挂在最后一轮上。
+ *
+ * 流式期间最后一轮天然是「用户消息 + pending」——`send()` 会先把用户消息 append 进
+ * `messages`，模型答完才 append assistant 消息，所以 pending 就是最后一轮的答案。
+ */
+function toTurns(messages: ChatMessage[], pending: Pending | null): Turn[] {
+  const turns: Turn[] = [];
 
   for (const message of messages) {
     if (message.role === "system") continue;
     const text = messageText(message);
     if (!text) continue;
     if (message.role === "user") {
-      blocks.push(`**你**\n\n${text.replace(/\n/g, "\n> ").replace(/^(?!>)/, "> ")}`);
-    } else {
-      blocks.push(`**DeepSeek**\n\n${text}`);
+      turns.push({ user: text });
+      continue;
     }
+    const last = turns[turns.length - 1];
+    if (last && last.assistant === undefined) last.assistant = text;
+    else turns.push({ assistant: text });
   }
 
   if (pending) {
-    blocks.push(`**DeepSeek**\n\n${pending.content || "…"}`);
-    if (pending.reasoning) {
-      blocks.push(`> 💭 ${pending.reasoning.replace(/\n/g, "\n> ")}`);
+    let target = turns[turns.length - 1];
+    if (!target || target.assistant !== undefined) {
+      target = {};
+      turns.push(target);
     }
+    target.assistant = pending.content || "…";
+    if (pending.reasoning) target.reasoning = pending.reasoning;
+  }
+
+  return turns;
+}
+
+/** 一轮的 markdown：你问 → DeepSeek 答；思考链跟在同一轮里，不单独成块 */
+function turnMarkdown(turn: Turn): string {
+  const parts: string[] = [];
+  if (turn.user) parts.push(`**你**\n\n${quote(turn.user)}`);
+  if (turn.assistant !== undefined) {
+    parts.push(`**DeepSeek**\n\n${turn.assistant}`);
+    if (turn.reasoning) parts.push(`> 💭 ${turn.reasoning.replace(/\n/g, "\n> ")}`);
+  }
+  return parts.join("\n\n");
+}
+
+/** 用户消息按引用块渲染，保留换行 */
+function quote(text: string): string {
+  return text.replace(/\n/g, "\n> ").replace(/^(?!>)/, "> ");
+}
+
+/**
+ * 详情面板的 markdown。**最新一轮置顶**，不是按时间正序 —— 这是被 Raycast 逼出来的：
+ *
+ * `List.Item.Detail` 没有滚动 API，滚动位置是绝对值且不跟随内容（内容在下面增长时视口
+ * 一动不动，实测）。所以"刚发出去的消息 + 正在流式的回答"只有放在**内容开头**才看得见：
+ * 最新一轮在最前面，更早的对话接在后面（越往下越早）。配上 `scrollToTopOnSend()` 里的
+ * 短内容归零，按 ↵ 之后一定能看到自己的输入和回答在长。
+ *
+ * 只有一轮时不加分区标题，保证从快捷命令 `⌘N` 进来时的观感和以前一致。
+ * `history: false` 只给发送瞬间那次"归位"渲染用。
+ */
+function transcriptMarkdown(
+  messages: ChatMessage[],
+  pending: Pending | null,
+  error: string | undefined,
+  reference: ReferenceBlock | null,
+  options: { history?: boolean } = {},
+): string {
+  const blocks: string[] = [];
+
+  if (reference) blocks.push(referenceMarkdown(reference));
+
+  const turns = toTurns(messages, pending);
+  const latest = turns[turns.length - 1];
+  if (latest) {
+    const earlier = turns.slice(0, -1).reverse();
+    const latestBlock = earlier.length > 0 ? `### 🆕 最新一轮\n\n${turnMarkdown(latest)}` : turnMarkdown(latest);
+    const parts = [latestBlock];
+    if (options.history !== false && earlier.length > 0) {
+      const history = earlier.map(turnMarkdown).join("\n\n---\n\n");
+      parts.push(`### 📜 更早的对话（${earlier.length} 轮，越往下越早）\n\n${history}`);
+    }
+    blocks.push(parts.join("\n\n---\n\n"));
   }
 
   if (error) blocks.push(`### ⚠️ 出错了\n\n\`\`\`\n${error}\n\`\`\``);

@@ -153,6 +153,8 @@ Chat with Selection（热键）
 - 每条消息都是 `ChatMessage`；带图消息的 `content` 是 `ContentPart[]`。
 - **流式中间态**放在 `pending`，不写进 `messages`；流结束才 append 成完整 assistant 消息。
 - 图片只在发送时转 base64；**存历史前会剥掉**（见约束 6）。
+- 详情面板**最新一轮置顶**（更早的对话接在后面），按 `↵` 时还会做一次"归位到顶部"的短渲染 ——
+  Raycast 的 Detail 没有滚动 API，只能这么让新内容落在视口里，见约束 18。
 
 ### 3. 历史存储
 
@@ -462,6 +464,26 @@ Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），�
 
 `Ask About Image` **不开放**这个菜单：换到不带 vision 的模型会直接失败（`regenerable: false`）。
 
+### 18. 详情面板的滚动：Raycast 没有 API，只能靠「最新一轮置顶 + 发送时归零」
+
+`List.Item.Detail`（独立的 `Detail` 也一样）**没有任何滚动 API**，实测行为是：
+
+- 滚动位置是**绝对值**：内容在下方增长时视口一动不动 —— 哪怕已经滚到最底部再增长也不跟随；
+- **没有 scroll anchoring**：把内容插到顶部，视口不会为插入做补偿（已往下滚的人会看到内容整体下移）；
+- 能改变滚动位置的只有两件事：**用户自己滚**，以及**内容短到不需要滚动时被强制钳到 0**。
+
+所以 `chat-view.tsx` 里的两条规则是配套的，别拆开改：
+
+1. **最新一轮置顶**（`transcriptMarkdown`）：详情面板开头永远是「你刚发的那条 + 正在流式的回答」，
+   更早的对话按「越往下越早」接在后面。只有一轮时不加分区标题，保证从快捷命令 `⌘N`
+   进来时的观感不变。
+2. **发送时归零**（`scrollToTopOnSend`）：按 ↵ 那一下先渲染一段"只有最新一轮"的短内容
+   （`SCROLL_RESET_MS = 200ms`）把滚动位置钳到 0，再渲染完整内容。**只在发送这一下做**，
+   流式过程中绝不碰 —— 否则会把正在往上翻历史的用户拽回顶部。
+
+> 「流式输出时看不到新内容」的根因就在这里：内容在长，视口在顶部不动。
+> 别去找 `scrollToBottom` 之类的 API，它不存在（`clearSearchBar()` 只能滚到**顶部**）。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -618,7 +640,7 @@ interface PresetRunBase { system: string; model: string; effort: Effort }
 - [ ] `npm run lint` 通过
 - [ ] 动了迁移 / 存储结构时，`npm run verify` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 17 条硬性约束
+- [ ] 没有触碰上面 18 条硬性约束
 - [ ] 新增 LocalStorage key 时，已按第 16 条登记进迁移包
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name
