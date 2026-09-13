@@ -43,7 +43,7 @@
       "name": "chat",
       "title": "Chat",
       "subtitle": "DeepSeek",
-      "description": "多轮对话，支持附加图片",
+      "description": "多轮对话，支持附加图片与追问",
       "mode": "view"
     },
     {
@@ -80,6 +80,7 @@
     {
       "name": "model",
       "title": "Model",
+      "description": "留空则用 deepseek-flash；也可换成 deepseek-v4-pro",
       "type": "textfield",
       "required": false,
       "default": "deepseek-flash"

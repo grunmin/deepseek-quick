@@ -200,10 +200,11 @@ DeepSeek 的 `reasoning_effort` 只接受 `low` / `high` / `max`（默认 `high`
 会话切换走 `searchBarAccessory` 的 `List.Dropdown`。
 另外 `loaded` 之后才渲染条目 —— 否则下拉和锚点会先落到空数据上，视觉上跳一下。
 
-### 8. 切换 / 删除会话时必须作废在途请求
+### 8. 切换会话 / 开新对话时必须作废在途请求
 
-`switchTo()` 和 `removeConversation()` 都要 `runTokenRef.current += 1` 并 `abort()`，
-否则旧请求的结果会覆盖新会话的内容（`stale()` 守卫）。
+`switchTo()` 与 `startNewChat()` 都要经过 `resetTransient()` 做 `runTokenRef.current += 1`
+并 `abort()`，否则旧请求的结果会覆盖新会话的内容（`stale()` 守卫）。
+删除会话已不在 Chat 内（改由 `history-view.tsx` 负责），所以这里不再涉及 `removeConversation()`。
 
 ### 9. `mode: "view"` 的命令**绝不能**用 `async` 主函数
 

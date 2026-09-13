@@ -314,7 +314,7 @@ npm run fix-lint # ray lint --fix
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 10 条**已修复、不要改回去**的硬性约束。
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 12 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
