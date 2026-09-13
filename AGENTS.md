@@ -51,6 +51,7 @@ src/
     images.ts        图片文件路径 → data URI（isImagePath / toDataUri）
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
     prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
+    presets.ts       Chat 预设（prompt / model / effort）+ 逐级回落、损坏备份
     use-stream.ts    useStream()：单次流式请求的 React hook（80ms 节流 + 去重）
     debug.ts         dbg()：追加写 /tmp/dsq-debug.log（临时调试用，可整体删除）
   components/
@@ -59,9 +60,11 @@ src/
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
+    chat-presets-view.tsx   Chat Presets 管理界面（List + Form）
     history-backup-view.tsx Backup History：导出 / 导入 / 损坏抢救
   explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx / chat.tsx /
-  chat-selection.tsx / history.tsx / configure.tsx / backup.tsx   ← 9 个命令入口，文件名 = command name
+  chat-selection.tsx / history.tsx / configure.tsx / backup.tsx / presets.tsx
+                                                    ← 10 个命令入口，文件名 = command name
 ```
 
 **入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
@@ -167,6 +170,7 @@ Chat with Selection（热键）
 |---|---|---|
 | model、思考强度 | `package.json` → `commands[].preferences`（Raycast **原生命令级偏好**） | `prefs()` |
 | system prompt | LocalStorage（`prompt-config.ts`，键 `deepseek-quick.prompt-overrides`） | `resolveSystemPrompt(command, builtin)` |
+| Chat 预设（prompt + model + effort） | LocalStorage（`presets.ts`，键 `deepseek-quick.chat-presets`） | `resolveActivePreset()` — **只能在 chat 命令上下文里调** |
 | apiKey / endpoint / translateTo / 输出行为 | 扩展级 `preferences` | `prefs()` |
 
 **model / 强度**：`getPreferenceValues()` 返回的是**当前命令作用域**的合并结果 ——
@@ -347,6 +351,19 @@ Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项�
 配套的一条：`chat-view.tsx` 里保存历史用的是**独立的** try/catch。写盘失败只提示
 「回答已生成，但没能存进历史」，**绝不能**被外层 catch 当成「请求失败」而把已生成的回答回退掉。
 
+### 15. Chat 预设的三条硬规则
+
+1. **`presetRef` 不能省**。`run()` 是 `useCallback([], ...)`，闭包里的 `preset` 会永远停在
+   首次渲染的 `null` —— 表现就是"切换预设后发的第一条消息仍用旧配置"。必须用 ref 取最新值。
+2. **发送前要用 `withSystemPrompt()` 替换 system**。历史里存的是创建对话时的 system，
+   不替换的话「中途切预设」不会生效。切换时也同步更新 `messages` 里的 system，保持一致。
+3. **回落顺序不能反**：预设 → chat 命令级（`modelOverride`/`effortOverride`）→ 扩展全局。
+   因为 `prefs()` 是**命令作用域**的，`resolveActivePreset()` 必须在 **chat 命令**里调用；
+   在 Chat Presets 命令里调只会拿到扩展全局值（管理界面只做展示，不影响发请求，所以无所谓）。
+
+`presets.ts` 的损坏处理比 `history.ts` **轻**：预设是配置（小、可重建），解析失败时把原始内容
+挪到 `…chat-presets.corrupted` 备份后返回 `[]`，**不**像历史那样拒绝写入。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -489,6 +506,6 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 14 条硬性约束
+- [ ] 没有触碰上面 15 条硬性约束
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name

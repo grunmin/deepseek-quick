@@ -21,6 +21,7 @@
   - [用量与缓存](#用量与缓存)
   - [看图问答](#看图问答)
   - [多轮对话](#多轮对话)
+  - [Chat 预设（Preset）](#chat-预设preset)
   - [带着选区开聊](#带着选区开聊)
   - [历史记录与继续对话](#历史记录与继续对话)
   - [数据安全与备份](#数据安全与备份)
@@ -51,6 +52,7 @@
 |---|---|
 | ⚡ 秒级快捷动作 | 解释 / 翻译 / 改写，默认**关闭思考**（`thinking.disabled`），首字最快 |
 | 🌐 中英互译 | 翻译默认自动判向：中文→英文、英文→中文；也可切回指定目标语言 |
+| 🎭 Chat 预设 | 建多套「prompt + 模型 + 思考强度」，Chat 里 `⌘K` 一键切换 |
 | 🎛 模型 / 强度按命令可配 | 全局默认之外，5 条 AI 命令各自可覆盖 Model 与思考强度 |
 | 📝 Prompt 可自定义 | `Configure Prompts` 命令多行编辑 system prompt，可一键恢复内置默认 |
 | 💬 多轮对话 | 搜索栏就是输入框，右侧是可滚动的 Markdown 对话区 |
@@ -210,6 +212,7 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 | `History` | 浏览历史对话并从任意一条继续 | — |
 | `Configure Prompts` | 按命令自定义 system prompt（多行） | — |
 | `Backup History` | 导出 / 导入对话历史（JSON），并可抢救损坏数据 | — |
+| `Chat Presets` | 管理 Chat 预设（prompt / 模型 / 思考强度） | — |
 
 **设置热键**：Raycast 根搜索里输入命令名 → `⌘K` → **Configure Command** → **Record Hotkey**。
 
@@ -279,6 +282,7 @@ DeepSeek 的上下文缓存要求：**前缀从第 0 个 token 起完整相同**
 
 - **输入**：直接在搜索栏打字，`↵` 发送。**没有弹窗、没有二次跳转**
 - **切换会话**：`⌘P` 打开搜索栏右侧的**会话下拉**，选中即切换
+- **切换预设**：`⌘K` → **切换 Preset** → 选一个（当前预设名会显示在输入框提示里）
 - `⌘⇧I` **附加图片发送**（打开表单，搜索栏塞不进文件选择器）
 - `⌘N` 新对话 · `⌘⇧H` 打开两栏会话记录（删除也在那里，`⌘X`）
 - `⌘⇧C` 复制本次回复 · `⌘⌥C` 复制完整对话
@@ -292,6 +296,36 @@ DeepSeek 的上下文缓存要求：**前缀从第 0 个 token 起完整相同**
 > [raycast/extensions#83](https://github.com/raycast/extensions/issues/83)）。
 > 三者「满宽 / 可读长文本 / 有输入框」只能取二，所以选择：让详情区占满宽度承载整个对话，
 > 会话列表搬进搜索栏下拉，左侧只留一个锚点条目。
+
+### Chat 预设（Preset）
+
+一套**可复用的「system prompt + 模型 + 思考强度」**。适合在几种固定角色之间切换，
+比如「代码审查」「翻译润色」「苏格拉底式提问」。
+
+根搜索运行 **`Chat Presets`** 管理（或 Chat 里 `⌘K` → **切换 Preset** → **管理 Presets…**）：
+
+- **新建**：填名称、System Prompt（多行）、Model、思考强度
+- **编辑 / 复制为新的 / 删除**；删除正在用的预设会自动回落到内置「默认」
+- **设为当前 Preset**：Chat 里立刻生效
+
+在 Chat 里切换走 `⌘K` → **切换 Preset**（搜索栏那个位置只能放一个下拉，已经被会话占用），
+当前预设名会显示在输入框提示里。
+
+**回落规则** —— 留空、或选「跟随」，就往下掉一级：
+
+```
+预设自己的 prompt / model / effort
+   ↓ 留空 或 选「跟随」
+Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时的两项）
+   ↓ 没设
+扩展全局 Model / Chat Reasoning
+```
+
+内置的「默认」预设 = 「让 Chat 用它原本的配置」，它的 prompt 依然由 **Configure Prompts** 管。
+一句话区分：**想临时换一种聊法 → 用预设；想改"默认长什么样" → 用 Configure Prompts + 命令设置。**
+
+> ⚠️ 预设是**全局当前项**，不是每条会话各记一个。切换后对**所有会话**的下一条消息生效 ——
+> 好处是可以把一段聊到一半的对话随时切到另一个角色继续；切换时当前对话的 system 也会同步更新。
 
 ### 带着选区开聊
 
@@ -452,7 +486,7 @@ npm run fix-lint # ray lint --fix
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 14 条**已修复、不要改回去**的硬性约束。
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 15 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
@@ -469,6 +503,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── images.ts           图片文件 → data URI
 │   │   ├── selection.ts        「当前选区」统一读取（文字 / Finder 图片）
 │   │   ├── prompt-config.ts    每命令 system prompt 覆盖（LocalStorage）
+│   │   ├── presets.ts          Chat 预设（prompt / 模型 / 强度）+ 逐级回落
 │   │   ├── use-stream.ts       流式状态 hook（80ms 节流 + 去重）
 │   │   └── debug.ts            追加写 /tmp/dsq-debug.log
 │   ├── components/
@@ -477,16 +512,18 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── chat-view.tsx       多轮对话主界面
 │   │   ├── history-view.tsx    两栏历史浏览器
 │   │   ├── prompt-config-view.tsx   Configure Prompts 界面
+│   │   ├── chat-presets-view.tsx    Chat Presets 管理界面
 │   │   └── history-backup-view.tsx  Backup History：导出 / 导入 / 抢救
 │   ├── explain.tsx             ┐
 │   ├── translate.tsx           │
 │   ├── rewrite.tsx             │
-│   ├── ask-image.tsx           │ 9 个命令入口，
+│   ├── ask-image.tsx           │ 10 个命令入口，
 │   ├── chat.tsx                │ 每个对应 package.json 里的一条 command
 │   ├── chat-selection.tsx      │
 │   ├── history.tsx             │
 │   ├── configure.tsx           │
-│   └── backup.tsx              ┘
+│   ├── backup.tsx              │
+│   └── presets.tsx             ┘
 ├── package.json                扩展 manifest（命令、偏好、脚本）
 ├── tsconfig.json               TypeScript 配置
 └── AGENTS.md                   面向 AI / 贡献者的工程说明
