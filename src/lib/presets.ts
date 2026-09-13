@@ -2,7 +2,7 @@ import { LocalStorage } from "@raycast/api";
 import { prefs, type Effort } from "./config";
 import { dbg } from "./debug";
 import { resolveSystemPrompt } from "./prompt-config";
-import { CHAT_SYSTEM } from "./prompts";
+import { CHAT_PRESET_RESEARCH, CHAT_PRESET_SENIOR, CHAT_SYSTEM } from "./prompts";
 
 /**
  * Chat 的「Preset」：一套可复用的 **system prompt + 模型 + 思考强度**。
@@ -28,6 +28,53 @@ export const DEFAULT_PRESET_NAME = "默认";
 
 /** `"inherit"` = 跟随 Chat 命令 / 扩展全局的思考强度 */
 export type PresetEffort = Effort | "inherit";
+
+/**
+ * 代码里内置的预设：**开箱即用、只读**，「复制为新的」之后就可以随便改。
+ *
+ * 为什么不预置进 LocalStorage：那样得搞一个"只在第一次播种"的状态，
+ * 而且用户删掉之后还会纠结要不要再播一次。写成内置最省事、也永远能恢复。
+ */
+export interface BuiltinPreset {
+  id: string;
+  name: string;
+  /** 一句话说明用途，管理界面里的副标题 */
+  subtitle: string;
+  /** 固定 prompt。`undefined` = 用 Configure Prompts 里 Chat 的 prompt（只有「默认」如此） */
+  systemPrompt?: string;
+  model?: string;
+  effort: PresetEffort;
+}
+
+export const BUILTIN_PRESETS: BuiltinPreset[] = [
+  {
+    id: DEFAULT_PRESET_ID,
+    name: DEFAULT_PRESET_NAME,
+    subtitle: "轻量快捷的日常问答，跟随命令 / 全局的模型与思考强度",
+    // 不给 prompt：走 Configure Prompts 里 Chat 的那份
+    effort: "inherit",
+  },
+  {
+    id: "__senior__",
+    name: "资深模式",
+    subtitle: "资深专家口吻：结论先行、讲取舍、点风险、给可执行建议",
+    systemPrompt: CHAT_PRESET_SENIOR,
+    model: "deepseek-flash",
+    effort: "high",
+  },
+  {
+    id: "__research__",
+    name: "深度研究",
+    subtitle: "严谨拆解：显式假设、多方案对比、区分事实与推测、标注边界",
+    systemPrompt: CHAT_PRESET_RESEARCH,
+    model: "deepseek-flash",
+    effort: "high",
+  },
+];
+
+export function findBuiltin(id: string): BuiltinPreset | undefined {
+  return BUILTIN_PRESETS.find((b) => b.id === id);
+}
 
 export interface ChatPreset {
   id: string;
@@ -194,31 +241,52 @@ export async function setActivePresetId(id: string): Promise<void> {
 export async function resolveActivePreset(): Promise<ResolvedChatPreset> {
   const p = prefs();
 
-  const builtin: ResolvedChatPreset = {
+  /** 内置「默认」：prompt 走 Configure Prompts 的 chat 覆盖，model / effort 走命令与全局 */
+  const asDefault = async (): Promise<ResolvedChatPreset> => ({
     id: DEFAULT_PRESET_ID,
     name: DEFAULT_PRESET_NAME,
-    // 内置默认的 prompt 仍然走 Configure Prompts 的 chat 覆盖
     systemPrompt: await resolveSystemPrompt("chat", CHAT_SYSTEM),
     model: p.model,
     effort: p.reasoningEffort,
     isBuiltin: true,
-  };
+  });
 
   const activeId = await getActivePresetId();
-  if (activeId === DEFAULT_PRESET_ID) return builtin;
+  if (activeId === DEFAULT_PRESET_ID) return asDefault();
+
+  // 其它内置预设：prompt 是写死的档位，model / effort 也写死；只有 inherit 才回落
+  const builtin = findBuiltin(activeId);
+  if (builtin) {
+    return {
+      id: builtin.id,
+      name: builtin.name,
+      systemPrompt: builtin.systemPrompt ?? (await resolveSystemPrompt("chat", CHAT_SYSTEM)),
+      model: builtin.model?.trim() || p.model,
+      effort: builtin.effort === "inherit" ? p.reasoningEffort : builtin.effort,
+      isBuiltin: true,
+    };
+  }
 
   const preset = await getPreset(activeId);
   // 预设被删掉/读不出来 → 静默回落，不要让 Chat 打不开
-  if (!preset) return builtin;
+  if (!preset) return asDefault();
 
   return {
     id: preset.id,
     name: preset.name,
-    systemPrompt: preset.systemPrompt.trim() || builtin.systemPrompt,
+    systemPrompt: preset.systemPrompt.trim() || (await resolveSystemPrompt("chat", CHAT_SYSTEM)),
     model: preset.model?.trim() || p.model,
     effort: preset.effort === "inherit" ? p.reasoningEffort : preset.effort,
     isBuiltin: false,
   };
+}
+
+/** 给内置预设生成一句话摘要 */
+export function describeBuiltin(preset: BuiltinPreset): string {
+  if (!preset.model && preset.effort === "inherit") return "跟随命令 / 全局的模型与强度";
+  const model = preset.model?.trim() || "跟随全局 Model";
+  const effort = preset.effort === "inherit" ? "跟随全局强度" : `reasoning ${preset.effort}`;
+  return `${model} · ${effort}`;
 }
 
 /** 给 UI 用的一句话摘要 */

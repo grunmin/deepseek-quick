@@ -364,6 +364,11 @@ Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项�
 `presets.ts` 的损坏处理比 `history.ts` **轻**：预设是配置（小、可重建），解析失败时把原始内容
 挪到 `…chat-presets.corrupted` 备份后返回 `[]`，**不**像历史那样拒绝写入。
 
+**内置预设**定义在 `lib/presets.ts` 的 `BUILTIN_PRESETS`（prompt 常量在 `lib/prompts.ts`），
+**只读**：UI 上只能「设为当前」和「复制为新的」。要加一档就同时改这两个文件。
+`BUILTIN_PRESETS[0]` 是特殊的「默认」——它的 `systemPrompt` 为 `undefined`，
+表示"用 Configure Prompts 里 Chat 的 prompt"，`model`/`effort` 也都是 `inherit`。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
