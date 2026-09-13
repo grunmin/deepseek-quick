@@ -23,6 +23,7 @@
   - [多轮对话](#多轮对话)
   - [带着选区开聊](#带着选区开聊)
   - [历史记录与继续对话](#历史记录与继续对话)
+  - [数据安全与备份](#数据安全与备份)
 - [工作原理](#工作原理)
 - [排错](#排错)
 - [已知限制](#已知限制)
@@ -103,6 +104,10 @@ npm run dev   # 重新导入并监听
 
 在 `Raycast → Settings → Extensions` 里找到 **DeepSeek Quick** → 右键 → **Uninstall**。
 如果只是想停掉热更新监听，`⌃C` 结束 `npm run dev` 即可。
+
+> ⚠️ **卸载会连同对话历史一起删掉** —— 历史存在 Raycast 分配给这个扩展的私有加密存储里，
+> 卸载即清除，且不可恢复。动手前先跑 **`Backup History`** 导出成 JSON。
+> 详见[数据安全与备份](#数据安全与备份)。
 
 ## 配置 API Key
 
@@ -204,6 +209,7 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 | `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（作为参考内容） | `⌥V` |
 | `History` | 浏览历史对话并从任意一条继续 | — |
 | `Configure Prompts` | 按命令自定义 system prompt（多行） | — |
+| `Backup History` | 导出 / 导入对话历史（JSON），并可抢救损坏数据 | — |
 
 **设置热键**：Raycast 根搜索里输入命令名 → `⌘K` → **Configure Command** → **Record Hotkey**。
 
@@ -315,6 +321,51 @@ DeepSeek 的上下文缓存要求：**前缀从第 0 个 token 起完整相同**
 - `History` 命令（或 Chat 里 `⌘⇧H`）打开两栏浏览器：左侧列表 + 右侧内容预览。
 - `⌘K` → **继续这条对话** 从任意一条历史接着聊；`⌘X` 删除。
 
+### 数据安全与备份
+
+历史存在 **Raycast 分配给扩展的私有加密存储**里（底层 `main.db` 是加密的，外部工具读不了），
+并且**不跨设备同步**（Cloud Sync 是 Raycast Pro 功能）。所以下面这些必须知道：
+
+| 场景 | 会不会丢 | 说明 |
+|---|---|---|
+| 关掉 `npm run dev` / 重启 Raycast | ❌ 不会 | 扩展仍留在 Raycast 里，数据也在 |
+| **卸载扩展** | ⚠️ **会丢** | 扩展私有数据一并清除，不可恢复 |
+| **改 `package.json` 的 `name`** | ⚠️ **等于清空** | 扩展标识变了，存储命名空间跟着变，历史"凭空消失" |
+| 对话超过 **200 条** | ⚠️ 丢最旧的 | 上限写死在代码里，超出静默丢弃 |
+| 继续一条**带图**的旧对话 | ⚠️ 图丢了 | 历史里图片只存 `[图片]` 占位，模型看不到原图 |
+| 换机 / 重装系统 / 换 Raycast 账号 | ⚠️ **会丢** | 没有同步，数据只在这台机器上 |
+| 存储数据损坏 | ✅ **不会静默丢** | 进入**保护模式**：拒绝写入 + 自动备份原始数据 |
+
+**所以：定期跑 `Backup History` 导出。**
+
+```
+根搜索 → Backup History
+├── 📊 状态                  对话数 / 占用体积 / 是否损坏
+├── 📤 导出到文件…            普通 JSON，可丢进 iCloud / Git / 网盘
+├── 📋 复制为 JSON            直接进剪贴板
+├── 📥 从文件导入（合并）      按 id 合并，不会覆盖现有历史
+├── 📂 在 Finder 中显示数据目录
+└── 🚑 抢救损坏数据（仅在检测到损坏时出现）
+    ├── 导出损坏的原始数据
+    └── 清除全部历史数据并重新开始
+```
+
+导出文件格式（导入时按对话 `id` 去重，以 `updatedAt` 更新的为准）：
+
+```json
+{
+  "format": "deepseek-quick.history",
+  "version": 1,
+  "exportedAt": "2026-09-13T13:00:00.000Z",
+  "conversations": [ { "id": "c_...", "title": "...", "createdAt": 0, "updatedAt": 0, "messages": [] } ]
+}
+```
+
+> **关于"保护模式"**：如果历史数据解析失败，扩展**不会**把它当成"空历史" ——
+> 那样下一次保存就会把原始数据**永久覆盖**。取而代之的是：拒绝所有写入、把原始字符串
+> 原样备份一份，并在 Chat 顶部和 `History` 里明确提示。
+> 这是刻意设计，不是 bug，别把它"优化"掉。
+
 ## 工作原理
 
 ```
@@ -380,7 +431,11 @@ tail -f /tmp/dsq-debug.log
 
 ## 已知限制
 
-- 历史存在 Raycast 本地加密库，**不跨设备同步**（Cloud Sync 是 Raycast Pro 功能）
+- 历史存在 Raycast 本地加密库，**不跨设备同步**（Cloud Sync 是 Raycast Pro 功能）；
+  定期用 `Backup History` 导出是唯一的备份手段
+- 历史最多保留 **200** 条，超出后丢弃最旧的
+- 改 `package.json` 的 `name` 等于换了一个扩展，已有历史会读不到（不是删了，是命名空间变了）
+- 历史里图片只存 `[图片]` 占位，继续带图旧对话时模型看不到原图
 - 图片只在 `Ask About Image` 和 `Chat` 的附件里支持，纯文本快捷命令不处理图片
 - 长对话不做自动摘要，靠 DeepSeek 自己的上下文窗口
 - Raycast 扩展 API **没有真正的 sidebar**，会话列表只能用「左侧列表 + 右侧预览」（`List.isShowingDetail`）替代
@@ -397,7 +452,7 @@ npm run fix-lint # ray lint --fix
 npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 ```
 
-改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 13 条**已修复、不要改回去**的硬性约束。
+改代码前请先读 **[AGENTS.md](./AGENTS.md)**，里面记录了 14 条**已修复、不要改回去**的硬性约束。
 
 ## 目录结构
 
@@ -410,7 +465,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── config.ts           偏好解析（全局 + 命令级覆盖）+ API Key 三级回退
 │   │   ├── deepseek.ts         SSE 流式客户端、vision、reasoning_content
 │   │   ├── prompts.ts          各命令的内置 system prompt
-│   │   ├── history.ts          LocalStorage 对话存储（剥图片、限 200 条）
+│   │   ├── history.ts          LocalStorage 历史存储（损坏保护、剥图片、限 200 条）
 │   │   ├── images.ts           图片文件 → data URI
 │   │   ├── selection.ts        「当前选区」统一读取（文字 / Finder 图片）
 │   │   ├── prompt-config.ts    每命令 system prompt 覆盖（LocalStorage）
@@ -421,15 +476,17 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── result-view.tsx     快捷命令结果页（流式 + 替换/复制 + 继续讨论）
 │   │   ├── chat-view.tsx       多轮对话主界面
 │   │   ├── history-view.tsx    两栏历史浏览器
-│   │   └── prompt-config-view.tsx   Configure Prompts 界面
+│   │   ├── prompt-config-view.tsx   Configure Prompts 界面
+│   │   └── history-backup-view.tsx  Backup History：导出 / 导入 / 抢救
 │   ├── explain.tsx             ┐
 │   ├── translate.tsx           │
-│   ├── rewrite.tsx             │ 8 个命令入口，
-│   ├── ask-image.tsx           │ 每个对应 package.json 里的一条 command
-│   ├── chat.tsx                │
+│   ├── rewrite.tsx             │
+│   ├── ask-image.tsx           │ 9 个命令入口，
+│   ├── chat.tsx                │ 每个对应 package.json 里的一条 command
 │   ├── chat-selection.tsx      │
 │   ├── history.tsx             │
-│   └── configure.tsx           ┘
+│   ├── configure.tsx           │
+│   └── backup.tsx              ┘
 ├── package.json                扩展 manifest（命令、偏好、脚本）
 ├── tsconfig.json               TypeScript 配置
 └── AGENTS.md                   面向 AI / 贡献者的工程说明

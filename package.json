@@ -186,6 +186,13 @@
       "subtitle": "DeepSeek",
       "description": "给每条命令自定义 system prompt，支持多行编辑与恢复内置默认",
       "mode": "view"
+    },
+    {
+      "name": "backup",
+      "title": "Backup History",
+      "subtitle": "DeepSeek",
+      "description": "导出 / 导入对话历史（JSON），并可在数据损坏时抢救原始内容",
+      "mode": "view"
     }
   ],
   "preferences": [

@@ -1,8 +1,9 @@
 import { Action, ActionPanel, Icon, List, showToast, Toast } from "@raycast/api";
 import { useEffect, useState } from "react";
 import { messageText } from "../lib/deepseek";
-import { deleteConversation, listConversations, type Conversation } from "../lib/history";
+import { deleteConversation, readHistory, type Conversation } from "../lib/history";
 import { ChatView } from "./chat-view";
+import { HistoryBackupView } from "./history-backup-view";
 
 /**
  * 两栏会话记录：左侧会话列表，右侧滚动查看该会话的完整内容。
@@ -10,10 +11,13 @@ import { ChatView } from "./chat-view";
  */
 export function HistoryView() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [corrupted, setCorrupted] = useState(false);
   const [isLoading, setLoading] = useState(true);
 
   const refresh = async () => {
-    setConversations(await listConversations());
+    const snapshot = await readHistory();
+    setConversations(snapshot.conversations);
+    setCorrupted(snapshot.corrupted);
     setLoading(false);
   };
 
@@ -29,11 +33,64 @@ export function HistoryView() {
       navigationTitle="会话记录"
     >
       {conversations.length === 0 && !isLoading ? (
-        <List.EmptyView
-          title="还没有历史对话"
-          description="在 Chat 里聊一次就会出现在这里"
-          icon={Icon.Clock}
-        />
+        corrupted ? (
+          <List.EmptyView
+            title="历史数据读取失败"
+            description="原始数据已自动备份。为避免覆盖，写入已暂停 —— 请先抢救导出"
+            icon={Icon.Warning}
+            actions={
+              <ActionPanel>
+                <Action.Push
+                  title="打开 Backup History"
+                  icon={Icon.Upload}
+                  target={<HistoryBackupView />}
+                />
+              </ActionPanel>
+            }
+          />
+        ) : (
+          <List.EmptyView
+            title="还没有历史对话"
+            description="在 Chat 里聊一次就会出现在这里"
+            icon={Icon.Clock}
+            actions={
+              <ActionPanel>
+                <Action.Push
+                  title="导出 / 导入历史"
+                  icon={Icon.Upload}
+                  target={<HistoryBackupView />}
+                />
+              </ActionPanel>
+            }
+          />
+        )
+      ) : null}
+
+      {corrupted && conversations.length > 0 ? (
+        <List.Section title="警告">
+          <List.Item
+            id="__corrupted"
+            icon={Icon.Warning}
+            title="历史数据读取失败"
+            subtitle="写入已暂停，避免覆盖原始数据"
+            detail={
+              <List.Item.Detail
+                markdown={
+                  "### ⚠️ 历史数据读取失败\n\n原始内容已自动备份。为避免覆盖，**当前不会写入新的历史**。\n\n请用 **Backup History** 抢救导出。"
+                }
+              />
+            }
+            actions={
+              <ActionPanel>
+                <Action.Push
+                  title="打开 Backup History"
+                  icon={Icon.Upload}
+                  target={<HistoryBackupView />}
+                />
+              </ActionPanel>
+            }
+          />
+        </List.Section>
       ) : null}
 
       {conversations.map((conversation) => (
@@ -62,17 +119,35 @@ export function HistoryView() {
                 content={plainTranscript(conversation)}
                 shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
               />
-              <Action
-                title="删除"
-                icon={Icon.Trash}
-                style={Action.Style.Destructive}
-                shortcut={{ modifiers: ["cmd"], key: "x" }}
-                onAction={async () => {
-                  await deleteConversation(conversation.id);
-                  await showToast({ style: Toast.Style.Success, title: "已删除" });
-                  await refresh();
-                }}
-              />
+              <ActionPanel.Section>
+                <Action
+                  title="删除"
+                  icon={Icon.Trash}
+                  style={Action.Style.Destructive}
+                  shortcut={{ modifiers: ["cmd"], key: "x" }}
+                  onAction={async () => {
+                    try {
+                      await deleteConversation(conversation.id);
+                      await showToast({ style: Toast.Style.Success, title: "已删除" });
+                    } catch (err: unknown) {
+                      await showToast({
+                        style: Toast.Style.Failure,
+                        title: "删除失败",
+                        message: err instanceof Error ? err.message : String(err),
+                      });
+                    }
+                    await refresh();
+                  }}
+                />
+              </ActionPanel.Section>
+
+              <ActionPanel.Section>
+                <Action.Push
+                  title="导出 / 导入历史…"
+                  icon={Icon.Upload}
+                  target={<HistoryBackupView />}
+                />
+              </ActionPanel.Section>
             </ActionPanel>
           }
         />

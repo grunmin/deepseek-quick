@@ -10,7 +10,7 @@ import {
 } from "@raycast/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { imagePart, messageText, streamChat, type ChatMessage, type ContentPart } from "../lib/deepseek";
-import { listConversations, saveConversation, type Conversation } from "../lib/history";
+import { listConversations, readHistory, saveConversation, type Conversation } from "../lib/history";
 import { CHAT_SYSTEM } from "../lib/prompts";
 import { dbg } from "../lib/debug";
 import { toDataUri } from "../lib/images";
@@ -65,6 +65,10 @@ export function ChatView({
   const [error, setError] = useState<string>();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loaded, setLoaded] = useState(false);
+  /** 历史数据损坏时为 true：此时禁止写入，并在界面上明确提示 */
+  const [historyCorrupted, setHistoryCorrupted] = useState(false);
+  /** 「回答已生成、但写历史失败」的提示。和「请求失败」是两码事，不能混 */
+  const [saveError, setSaveError] = useState<string>();
   /** 这条命令生效的 system prompt（可能被 Configure Prompts 覆盖） */
   const [systemPrompt, setSystemPrompt] = useState(CHAT_SYSTEM);
 
@@ -82,11 +86,12 @@ export function ChatView({
   // 必须先 loaded 才能渲染条目，否则下拉和锚点会先落到空数据上，视觉上跳一下。
   useEffect(() => {
     void (async () => {
-      const [list, system] = await Promise.all([
-        listConversations(),
+      const [history, system] = await Promise.all([
+        readHistory(),
         resolveSystemPrompt("chat", CHAT_SYSTEM),
       ]);
-      setConversations(list);
+      setConversations(history.conversations);
+      setHistoryCorrupted(history.corrupted);
       setSystemPrompt(system);
       // 没有从外部带进来的对话（新开一段）时，把初始的默认 system 换成解析后的
       if (!initialMessages || initialMessages.length === 0) {
@@ -113,6 +118,7 @@ export function ChatView({
     setError(undefined);
     setPending(null);
     setReferenceBlock(null);
+    setSaveError(undefined);
   }, []);
 
   const startNewChat = useCallback(() => {
@@ -193,13 +199,27 @@ export function ChatView({
 
       const complete: ChatMessage[] = [...history, { role: "assistant", content: result.content }];
       setMessages(complete);
-      const id = await saveConversation(complete, currentIdRef.current);
-      if (stale()) return;
-      // 先把列表刷新好再切 currentId，保证左侧一定存在这个条目
-      setConversations(await listConversations());
-      currentIdRef.current = id;
-      setCurrentId(id);
+
+      // 保存历史**单独** try/catch：写盘失败不该被当成「请求失败」，
+      // 更不该把已经拿到的回答回退掉（旧版就会那样）。
+      try {
+        const id = await saveConversation(complete, currentIdRef.current);
+        if (stale()) return;
+        // 先把列表刷新好再切 currentId，保证左侧一定存在这个条目
+        setConversations(await listConversations());
+        currentIdRef.current = id;
+        setCurrentId(id);
+        setSaveError(undefined);
+        setHistoryCorrupted(false);
+      } catch (saveErr: unknown) {
+        if (stale()) return;
+        const message = saveErr instanceof Error ? saveErr.message : String(saveErr);
+        dbg(`run: 保存历史失败 ${message.slice(0, 300)}`);
+        setSaveError(message);
+        await showToast({ style: Toast.Style.Failure, title: "回答已生成，但没能存进历史", message });
+      }
     } catch (err: unknown) {
+      // 走到这里只剩「请求本身」的错误
       if (stale()) return;
       if (controller.signal.aborted) {
         setMessages(content ? [...history, { role: "assistant", content }] : history);
@@ -260,7 +280,13 @@ export function ChatView({
     await run(next);
   }, [messages, referenceBlock, run]);
 
-  const transcript = transcriptMarkdown(messages, pending, error, referenceBlock);
+  const transcript = [
+    historyCorrupted ? CORRUPTED_NOTICE : "",
+    transcriptMarkdown(messages, pending, error, referenceBlock),
+    saveError ? saveFailureNotice(saveError) : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 
   const actions = () => (
     <ActionPanel>
@@ -559,4 +585,32 @@ function referenceMarkdown(block: ReferenceBlock): string {
   if (block.images.length > 0) parts.push(`> 🖼 附 ${block.images.length} 张参考图片`);
 
   return parts.join("\n\n");
+}
+
+/* ────────────────────────── 存储异常提示 ────────────────────────── */
+
+/** 历史损坏时的顶部横幅 —— 必须让人一眼看到"现在不会写历史" */
+const CORRUPTED_NOTICE = [
+  "### ⚠️ 历史数据读取失败",
+  "",
+  "存储里的历史**解析不出来**。为避免覆盖原始数据，**当前不会写入任何历史**。",
+  "原始内容已自动备份，请运行 **`Backup History`** 把它导出来，再决定是否清理。",
+  "",
+  "_对话本身可以正常继续，只是这一条不会存进历史。_",
+].join("\n");
+
+/**
+ * 回答成功、但写历史失败时的提示。
+ * 刻意和「请求失败」分开：模型已经答完了，内容没有丢，别让用户以为要重试。
+ */
+function saveFailureNotice(message: string): string {
+  return [
+    "### ⚠️ 回答已生成，但没能存进历史",
+    "",
+    "```",
+    message,
+    "```",
+    "",
+    "_内容没有丢，可以直接复制走；但这条对话不会出现在历史里。_",
+  ].join("\n");
 }

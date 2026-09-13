@@ -47,7 +47,7 @@ src/
     config.ts        偏好解析 prefs()（扩展级 + 命令级覆盖）+ API Key 三级回退（apiKey()）
     deepseek.ts      SSE 流式客户端 streamChat()、ContentPart/imagePart/textPart/messageText
     prompts.ts       各命令的**内置** system prompt（纯字符串常量，无逻辑）
-    history.ts       LocalStorage 会话存储：list/save/delete/clear，剥图片、限 200 条
+    history.ts       LocalStorage 历史存储：read/save/delete/import + **损坏保护**、剥图片、限 200 条
     images.ts        图片文件路径 → data URI（isImagePath / toDataUri）
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
     prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
@@ -59,8 +59,9 @@ src/
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
     history-view.tsx 两栏历史浏览器（List.isShowingDetail）
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
+    history-backup-view.tsx Backup History：导出 / 导入 / 损坏抢救
   explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx / chat.tsx /
-  chat-selection.tsx / history.tsx / configure.tsx   ← 8 个命令入口，文件名 = command name
+  chat-selection.tsx / history.tsx / configure.tsx / backup.tsx   ← 9 个命令入口，文件名 = command name
 ```
 
 **入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
@@ -317,6 +318,23 @@ Raycast 的规则是「命令级偏好继承扩展级，并覆盖**同名**项�
 或 default 用 `"inherit"` 这类哨兵值），再由 `prefs()` 显式做「空则回落」。
 新增命令级偏好时必须遵守。
 
+### 14. 历史解析失败**绝不能**当成「空历史」
+
+历史是 **read-modify-write**：`saveConversation` 先 `readAll()` 再整体写回。所以一旦在解析
+失败时返回 `[]`，下一次保存就会把原始数据**永久覆盖** —— 旧版 `catch { return []; }` 正是
+这么静默丢数据的。
+
+现在的做法（`lib/history.ts`）：
+
+- `readHistory()` 返回 `{ conversations, corrupted, bytes }`；解析失败置 `corrupted: true`，
+  并把**原始字符串原样**备份到 `deepseek-quick.conversations.corrupted`。
+- 所有写操作（`saveConversation` / `deleteConversation` / `importConversations`）统一走
+  `writable()`，`corrupted` 时抛 `HistoryCorruptedError`，**拒绝写入**。
+- UI 在 Chat 顶部和 `History` 里显示保护模式提示，并提供 `Backup History` 抢救导出。
+
+配套的一条：`chat-view.tsx` 里保存历史用的是**独立的** try/catch。写盘失败只提示
+「回答已生成，但没能存进历史」，**绝不能**被外层 catch 当成「请求失败」而把已生成的回答回退掉。
+
 ## 常见任务
 
 ### 新增一条快捷命令（例：Summarize）
@@ -456,6 +474,6 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 13 条硬性约束
+- [ ] 没有触碰上面 14 条硬性约束
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name
