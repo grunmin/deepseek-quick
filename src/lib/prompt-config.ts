@@ -12,7 +12,7 @@ import { LocalStorage } from "@raycast/api";
  *   - system prompt    → 这个模块 + `Configure Prompts` 命令（Form.TextArea，真·多行）
  */
 
-export const PROMPT_COMMANDS = ["explain", "translate", "rewrite", "ask-image", "chat"] as const;
+export const PROMPT_COMMANDS = ["explain", "translate", "rewrite", "run-prompt", "ask-image", "chat"] as const;
 
 export type PromptCommand = (typeof PROMPT_COMMANDS)[number];
 

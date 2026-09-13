@@ -18,6 +18,7 @@ import {
   EXPLAIN_SYSTEM,
   IMAGE_SYSTEM,
   REWRITE_SYSTEM,
+  RUN_PROMPT_SYSTEM,
   TRANSLATE_SYSTEM_BIDIRECTIONAL,
   translateSystem,
 } from "../lib/prompts";
@@ -42,6 +43,7 @@ const META: Record<PromptCommand, { title: string; subtitle: string }> = {
   explain: { title: "Explain Selection", subtitle: "解释选中文本" },
   translate: { title: "Translate Selection", subtitle: "翻译选中文本" },
   rewrite: { title: "Rewrite Selection", subtitle: "改写 / 润色" },
+  "run-prompt": { title: "Run Prompt", subtitle: "选中文本即 prompt，直接执行" },
   "ask-image": { title: "Ask About Image", subtitle: "看图问答" },
   chat: { title: "Chat", subtitle: "多轮对话（Chat with Selection 也走这条）" },
 };
@@ -58,6 +60,8 @@ function builtinPrompt(command: PromptCommand): string {
     }
     case "rewrite":
       return REWRITE_SYSTEM;
+    case "run-prompt":
+      return RUN_PROMPT_SYSTEM;
     case "ask-image":
       return IMAGE_SYSTEM;
     case "chat":

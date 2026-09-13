@@ -63,9 +63,9 @@ src/
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
     chat-presets-view.tsx   Chat Presets 管理界面（List + Form）
     history-backup-view.tsx Backup History：导出 / 导入 / 迁移包 / 损坏抢救
-  explain.tsx / translate.tsx / rewrite.tsx / ask-image.tsx / chat.tsx /
+  explain.tsx / translate.tsx / rewrite.tsx / run-prompt.tsx / ask-image.tsx / chat.tsx /
   chat-selection.tsx / history.tsx / configure.tsx / backup.tsx / presets.tsx
-                                                    ← 10 个命令入口，文件名 = command name
+                                                    ← 11 个命令入口，文件名 = command name
 ```
 
 **入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
@@ -74,7 +74,7 @@ default export 一个 async 函数（参考 `chat-selection.tsx`）。
 
 ## 架构与数据流
 
-### 1. 快捷命令链路（explain / translate / rewrite）
+### 1. 快捷命令链路（explain / translate / rewrite / run-prompt）
 
 ```
 用户选文本 → 按热键
@@ -86,6 +86,9 @@ default export 一个 async 函数（参考 `chat-selection.tsx`）。
   → 主操作 ↵ ：Clipboard.paste() 替换原文 / CopyToClipboard
   → ⌘N ：<ChatView initialMessages={[...messages, assistant]} />
 ```
+
+> `run-prompt` 是这条链路的特例：`buildUser` 直接**原样返回选区** —— 选中的文本本身就是 prompt，
+> 不再包「请解释下面这段」之类的固定指令，system prompt 只约束回答风格。
 
 ### 2. 对话链路（chat / chat-selection）
 
@@ -514,7 +517,7 @@ interface Conversation {
 interface Selection { text: string; images: string[] }   // images 是 data URI
 
 /** 允许自定义 prompt 的命令。PROMPT_COMMANDS 是唯一来源，新增命令必须登记 */
-type PromptCommand = "explain" | "translate" | "rewrite" | "ask-image" | "chat";
+type PromptCommand = "explain" | "translate" | "rewrite" | "run-prompt" | "ask-image" | "chat";
 /** LocalStorage 里的覆盖表；空字符串不落盘，全空时整个 key 被删除 */
 type PromptOverrides = Partial<Record<PromptCommand, string>>;
 ```

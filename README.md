@@ -1,7 +1,7 @@
 # DeepSeek Quick
 
 > 在 Raycast 里选中一段文本，按一下热键，秒级拿到**解释 / 翻译 / 改写**；
-> 还能就选中的文字或 Finder 里的图片**开一段多轮对话**。
+> 选中写好的 prompt 还能**直接执行**，也可以就选中的文字或 Finder 里的图片**开一段多轮对话**。
 > 直连 DeepSeek API —— **不经过 Raycast AI，不需要 Raycast Pro**。
 
 ---
@@ -18,6 +18,7 @@
 - [命令与热键](#命令与热键)
 - [使用指南](#使用指南)
   - [解释 / 翻译 / 改写](#解释--翻译--改写)
+  - [执行选中的 prompt](#执行选中的-prompt)
   - [用量与缓存](#用量与缓存)
   - [看图问答](#看图问答)
   - [多轮对话](#多轮对话)
@@ -40,6 +41,7 @@
 一个 **本地 Raycast 扩展**，把 DeepSeek 接到 macOS 的任意 App 上：
 
 - 在浏览器 / 编辑器 / PDF 里选中文字 → 按热键 → 直接看到结果，可以一键**替换原文**；
+- 手里有写好的 prompt → 选中它 → 按热键 **直接执行**，不用复制粘贴进对话；
 - 想追问就按 `⌘N` **继续讨论**，对话自动保存到**历史**里，随时能接着聊；
 - 在 Finder 里选中图片 → 也能直接提问（vision）。
 
@@ -51,9 +53,10 @@
 | 特性 | 说明 |
 |---|---|
 | ⚡ 秒级快捷动作 | 解释 / 翻译 / 改写，默认**关闭思考**（`thinking.disabled`），首字最快 |
+| ▶️ 执行选中的 prompt | 把选中的文本**当作 prompt** 直接发给模型执行，不用先复制再粘贴 |
 | 🌐 中英互译 | 翻译默认自动判向：中文→英文、英文→中文；也可切回指定目标语言 |
 | 🎭 Chat 预设 | 建多套「prompt + 模型 + 思考强度」，Chat 里 `⌘K` 一键切换 |
-| 🎛 模型 / 强度按命令可配 | 全局默认之外，5 条 AI 命令各自可覆盖 Model 与思考强度 |
+| 🎛 模型 / 强度按命令可配 | 全局默认之外，6 条 AI 命令各自可覆盖 Model 与思考强度 |
 | 📝 Prompt 可自定义 | `Configure Prompts` 命令多行编辑 system prompt，可一键恢复内置默认 |
 | 💬 多轮对话 | 搜索栏就是输入框，右侧是可滚动的 Markdown 对话区 |
 | 🖼 读图 | `Ask About Image` 或对话里附加图片 |
@@ -146,7 +149,7 @@ prompt 也能整体替换 —— 见下一节。
 | **API Key** | 空 | 留空则依次回退到环境变量 `DEEPSEEK_API_KEY`、`~/.dsh/.credentials.yaml` |
 | **API Endpoint** | `https://api.deepseek.com/v1` | OpenAI 兼容端点，**不要**带 `/chat/completions` |
 | **Model** | `deepseek-flash` | 全局默认模型。换成 `deepseek-v4-pro` 也可以；各命令可单独覆盖 |
-| **Quick Action Reasoning** | `none` | 解释 / 翻译 / 改写 / 看图的**全局默认**思考强度。默认不思考，最快 |
+| **Quick Action Reasoning** | `none` | 解释 / 翻译 / 改写 / 执行 prompt / 看图的**全局默认**思考强度。默认不思考，最快 |
 | **Chat Reasoning** | `low` | Chat / 继续讨论的**全局默认**思考强度 |
 | **Translate Direction** | 开 | 「中英互译」：自动判断中文→英文 / 英文→中文。开启时忽略下面的 Translate To |
 | **Translate To** | `中文` | 关闭「中英互译」后才生效，用来指定单一目标语言 |
@@ -155,7 +158,7 @@ prompt 也能整体替换 —— 见下一节。
 
 ## 按命令自定义（模型 / 思考强度 / Prompt）
 
-5 条 AI 命令（`Explain` / `Translate` / `Rewrite` / `Ask About Image` / `Chat`）都能
+6 条 AI 命令（`Explain` / `Translate` / `Rewrite` / `Run Prompt` / `Ask About Image` / `Chat`）都能
 **各自**指定模型、思考强度和 system prompt。优先级统一是：
 
 ```
@@ -206,6 +209,7 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 | `Explain Selection` | 解释选中文本 | `⌥A` |
 | `Translate Selection` | 翻译选中文本（默认**中英互译**，自动判向） | `⌥S` |
 | `Rewrite Selection` | 改写 / 润色选中文本 | `⌥D` |
+| `Run Prompt` | 把选中的文本当作 prompt 直接执行 | `⌥P` |
 | `Ask About Image` | 对 Finder 里选中的图片提问 | `⌥G` |
 | `Chat` | 多轮对话，可附加图片 | `⌥C` |
 | `Chat with Selection` | 选中文字 / Finder 选中的图片 → 直接开聊（作为参考内容） | `⌥V` |
@@ -230,12 +234,28 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 > 看不到它们通常是正常的，原因见下面的[用量与缓存](#用量与缓存)。
 > 如果打开了 **Reasoning** 设置，思考链会以引用块形式显示在结果上方。
 
+### 执行选中的 prompt
+
+手里已经有一段写好的 prompt（笔记里收藏的、从网页复制的、模板里的）时，不用先开 Chat 再粘贴：
+
+1. 在**任意 App** 里选中那段 prompt 文本。
+2. 运行 `Run Prompt`（建议 `⌥P`）。
+3. 选中的文本会**原样**作为 user 消息发给模型，结果流式显示。
+
+和「解释 / 翻译 / 改写」的区别：那三条是「选中内容 + 固定指令」，做什么由内置 system prompt 决定；
+`Run Prompt` 是「**选中内容就是指令**」，system prompt 只约束回答风格（直接执行、不复述指令、
+有歧义时说明假设）。想换风格 → `Configure Prompts` 里的 **Run Prompt**，或结果页 `⌘K` → 自定义 Prompt。
+
+- `⌘N` **继续讨论**：带着这条 prompt 和回复进入对话视图，方便追问。
+- `↵` 的默认动作仍跟随全局 **Output Behavior**：`replace` 会把**你选中的 prompt 本身**替换成答案。
+  如果那段 prompt 还要留着，把 Output Behavior 改成 `copy`，或在结果页 `⌘K` →「复制结果」。
+
 ### 用量与缓存
 
 **为什么 `reasoning` / `cache hit` 常常是 0？** 这两个的原因完全不同，但都不是 bug。
 
 **`reasoning` 为 0 —— 设计如此。**
-快捷命令（解释 / 翻译 / 改写 / 看图）默认 `Quick Action Reasoning = none`，
+快捷命令（解释 / 翻译 / 改写 / 执行 prompt / 看图）默认 `Quick Action Reasoning = none`，
 发出的是 `thinking: { type: "disabled" }`，模型**根本不产生**思考 token。
 想看到它，把该项调到 `low` / `high` / `max` 即可（实测 `low` 时一次请求就有 446 个 reasoning tokens）。
 
@@ -607,7 +627,8 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   ├── explain.tsx             ┐
 │   ├── translate.tsx           │
 │   ├── rewrite.tsx             │
-│   ├── ask-image.tsx           │ 10 个命令入口，
+│   ├── run-prompt.tsx          │
+│   ├── ask-image.tsx           │ 11 个命令入口，
 │   ├── chat.tsx                │ 每个对应 package.json 里的一条 command
 │   ├── chat-selection.tsx      │
 │   ├── history.tsx             │
