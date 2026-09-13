@@ -265,9 +265,18 @@
       ]
     },
     {
+      "name": "translateBidirectional",
+      "title": "Translate Direction",
+      "label": "中英互译（自动判断方向）",
+      "description": "打开时自动判断：中文译成英文、英文译成中文，并忽略下面的 Translate To。关闭后才用 Translate To 指定目标语言",
+      "type": "checkbox",
+      "required": false,
+      "default": true
+    },
+    {
       "name": "translateTo",
       "title": "Translate To",
-      "description": "Translate Selection 命令的目标语言（内置 prompt 会用到它）",
+      "description": "关闭「中英互译」时使用的目标语言，默认 中文",
       "type": "textfield",
       "required": false,
       "default": "中文"

@@ -169,6 +169,11 @@ asOptionalEffort(p.effortOverride) ?? asEffort(p.quickActionEffort /* 或 reason
 `resolveSystemPrompt(command, BUILTIN)` 拿生效值。`ask-image.tsx` 和 `chat-view.tsx`
 不经过 `QuickAction`，各自解析。解析失败一律**静默回落到内置 prompt**（配置读不出来不该让命令挂掉）。
 
+> ⚠️ `translate` 比较特殊：它有**两个**内置 prompt（中英互译 / 指定目标语言），由偏好
+> `translateBidirectional` 决定用哪个。`prompt-config-view.tsx` 的 `builtinPrompt("translate")`
+> 和 `translate.tsx` 必须用**同一套判断**，否则「Configure Prompts」里预览到的「内置」
+> 会和实际发给模型的不一致。
+
 ## 硬性约束（Invariants）—— 改代码前必读
 
 以下每一条都是**实测踩坑后修好的**，改动时不要改回去。

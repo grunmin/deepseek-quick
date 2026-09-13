@@ -12,6 +12,8 @@ export interface ExtensionPreferences {
   model: string;
   quickActionEffort: Effort;
   reasoningEffort: Effort;
+  /** 中英互译：自动判断方向（默认开启）。关闭后才用 translateTo */
+  translateBidirectional: boolean;
   translateTo: string;
   showReasoning: boolean;
   outputBehavior: "replace" | "copy";
@@ -53,6 +55,8 @@ export function prefs(): ExtensionPreferences {
     model: p.modelOverride?.trim() || p.model?.trim() || "deepseek-flash",
     quickActionEffort: override ?? asEffort(p.quickActionEffort, "none"),
     reasoningEffort: override ?? asEffort(p.reasoningEffort, "low"),
+    // checkbox 默认 true；未设置时也要当作开启，所以用 !== false 而不是 Boolean()
+    translateBidirectional: p.translateBidirectional !== false,
     translateTo: p.translateTo?.trim() || "中文",
     showReasoning: Boolean(p.showReasoning),
     outputBehavior: p.outputBehavior === "copy" ? "copy" : "replace",

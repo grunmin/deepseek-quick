@@ -13,7 +13,14 @@ import {
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
 import { prefs } from "../lib/config";
-import { CHAT_SYSTEM, EXPLAIN_SYSTEM, IMAGE_SYSTEM, REWRITE_SYSTEM, translateSystem } from "../lib/prompts";
+import {
+  CHAT_SYSTEM,
+  EXPLAIN_SYSTEM,
+  IMAGE_SYSTEM,
+  REWRITE_SYSTEM,
+  TRANSLATE_SYSTEM_BIDIRECTIONAL,
+  translateSystem,
+} from "../lib/prompts";
 import {
   clearPromptOverrides,
   listPromptOverrides,
@@ -44,8 +51,11 @@ function builtinPrompt(command: PromptCommand): string {
   switch (command) {
     case "explain":
       return EXPLAIN_SYSTEM;
-    case "translate":
-      return translateSystem(prefs().translateTo);
+    case "translate": {
+      // 内置 prompt 取决于「中英互译」是否开启
+      const p = prefs();
+      return p.translateBidirectional ? TRANSLATE_SYSTEM_BIDIRECTIONAL : translateSystem(p.translateTo);
+    }
     case "rewrite":
       return REWRITE_SYSTEM;
     case "ask-image":

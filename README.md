@@ -48,6 +48,7 @@
 | 特性 | 说明 |
 |---|---|
 | ⚡ 秒级快捷动作 | 解释 / 翻译 / 改写，默认**关闭思考**（`thinking.disabled`），首字最快 |
+| 🌐 中英互译 | 翻译默认自动判向：中文→英文、英文→中文；也可切回指定目标语言 |
 | 🎛 模型 / 强度按命令可配 | 全局默认之外，5 条 AI 命令各自可覆盖 Model 与思考强度 |
 | 📝 Prompt 可自定义 | `Configure Prompts` 命令多行编辑 system prompt，可一键恢复内置默认 |
 | 💬 多轮对话 | 搜索栏就是输入框，右侧是可滚动的 Markdown 对话区 |
@@ -139,7 +140,8 @@ prompt 也能整体替换 —— 见下一节。
 | **Model** | `deepseek-flash` | 全局默认模型。换成 `deepseek-v4-pro` 也可以；各命令可单独覆盖 |
 | **Quick Action Reasoning** | `none` | 解释 / 翻译 / 改写 / 看图的**全局默认**思考强度。默认不思考，最快 |
 | **Chat Reasoning** | `low` | Chat / 继续讨论的**全局默认**思考强度 |
-| **Translate To** | `中文` | `Translate Selection` 的目标语言（内置 prompt 会用到） |
+| **Translate Direction** | 开 | 「中英互译」：自动判断中文→英文 / 英文→中文。开启时忽略下面的 Translate To |
+| **Translate To** | `中文` | 关闭「中英互译」后才生效，用来指定单一目标语言 |
 | **Reasoning** | 关 | 是否在结果里显示模型的思考链 |
 | **Output Behavior** | `replace` | 结果页主操作（`↵`）：替换选中文本 / 复制 |
 
@@ -185,14 +187,16 @@ prompt 固化成一份副本。想在内置基础上改，直接编辑预填好�
 > 得手写 `\n`。所以分工是：prompt 走自建配置命令 + `LocalStorage`，模型和思考强度这类单值
 > 才用原生偏好。
 
-> 翻译命令的内置 prompt 会带上当前的 **Translate To** 目标语言；一旦自定义，就完全以你写的为准。
+> 翻译命令有**两个内置 prompt**，用哪个取决于扩展设置里的 **Translate Direction**：
+> 开启「中英互译」时是自动判向的版本，关闭时是「目标语言：xxx」的版本。
+> `Configure Prompts` 里预览到的就是**当前生效**的那一个；一旦自定义，就完全以你写的为准。
 
 ## 命令与热键
 
 | 命令 | 用途 | 建议热键 |
 |---|---|---|
 | `Explain Selection` | 解释选中文本 | `⌥A` |
-| `Translate Selection` | 翻译选中文本 | `⌥S` |
+| `Translate Selection` | 翻译选中文本（默认**中英互译**，自动判向） | `⌥S` |
 | `Rewrite Selection` | 改写 / 润色选中文本 | `⌥D` |
 | `Ask About Image` | 对 Finder 里选中的图片提问 | `⌥G` |
 | `Chat` | 多轮对话，可附加图片 | `⌥C` |
