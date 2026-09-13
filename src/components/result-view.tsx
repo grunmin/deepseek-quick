@@ -1,7 +1,7 @@
 import { Action, ActionPanel, Clipboard, Detail, Icon, openCommandPreferences, showToast } from "@raycast/api";
 import { useMemo } from "react";
 import { prefs, type Effort } from "../lib/config";
-import type { ChatMessage } from "../lib/deepseek";
+import type { ChatMessage, Usage } from "../lib/deepseek";
 import { useStream } from "../lib/use-stream";
 import { ChatView } from "./chat-view";
 import { ConfigureView } from "./prompt-config-view";
@@ -38,12 +38,8 @@ export function ResultView({
       parts.push("_没有返回内容。_");
     }
 
-    if (usage?.completionTokens) {
-      parts.push(
-        `---\n\n<sub>${usage.promptTokens ?? "?"} in / ${usage.completionTokens} out` +
-          ` · reasoning ${usage.reasoningTokens ?? 0} · cache hit ${usage.cachedTokens ?? 0}</sub>`,
-      );
-    }
+    const usageLine = formatUsage(usage);
+    if (usageLine) parts.push(`---\n\n<sub>${usageLine}</sub>`);
 
     return parts.join("\n\n");
   }, [content, reasoning, error, isLoading, usage, p.showReasoning]);
@@ -101,4 +97,24 @@ export function ResultView({
       }
     />
   );
+}
+
+/**
+ * 用量摘要。**只在有值时**才显示 reasoning / cache ——
+ *
+ *   - reasoning：快捷命令默认 `thinking: disabled`，本来就不产生思考 token，恒为 0；
+ *   - cache hit：DeepSeek 的缓存是「前缀完整匹配 + 已落盘」才命中，以 64 tokens 为存储单位，
+ *     实际门槛远高于 64，几十到几百字的选中文本基本够不到（实测 136 tokens 连试 3 次都是 0，
+ *     2937 tokens 的第 2 次才命中 2688）。所以它常态就是 0。
+ *
+ * 把恒为 0 的字段摆出来只会让人以为坏了 —— 有值才显示，缓存顺便带上命中占比。
+ */
+function formatUsage(usage?: Usage): string | undefined {
+  if (!usage?.completionTokens) return undefined;
+
+  const bits = [`${usage.promptTokens ?? "?"} in / ${usage.completionTokens} out`];
+  if (usage.reasoningTokens) bits.push(`reasoning ${usage.reasoningTokens}`);
+  if (usage.cachedTokens) bits.push(`cache hit ${usage.cachedTokens}/${usage.promptTokens ?? "?"}`);
+
+  return bits.join(" · ");
 }

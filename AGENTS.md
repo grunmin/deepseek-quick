@@ -146,6 +146,18 @@ Chat with Selection（热键）
 - `choices[0].delta.content` → 正文；`choices[0].delta.reasoning_content` → 思考链（两者分开累积）。
 - 末尾 `usage` 取出 token 用量。
 
+**用量字段别当 bug 看**（都是实测结论）：
+
+- `prompt_tokens_details.cached_tokens` = 缓存命中数，与 DeepSeek 原生的
+  `prompt_cache_hit_tokens` 同值（两个字段都会返回）。缓存要求**前缀从第 0 个 token 起完整相同**、
+  已落盘、且能作为独立单元完整匹配，存储单位 64 tokens，但实际门槛远高于此：
+  实测 136 tokens 连试 3 次全 0，2937 tokens 第 2 次才命中 2688。
+  **所以短选中文本恒为 0 是正常的**，不要试图"修"。
+- `completion_tokens_details.reasoning_tokens`：快捷命令默认 `thinking: disabled`，
+  DeepSeek 响应里**根本没有这个字段**，显示 0 是对的；只有 `reasoning_effort` 档位才会有
+  （实测 `low` → 446）。
+- `result-view.tsx` 的 `formatUsage()` **只在非零时**才追加这两项，避免"看着像坏了"。
+
 ### 6. 配置解析（模型 / 思考强度 / Prompt）
 
 三个维度的来源不同，改代码时别混：
