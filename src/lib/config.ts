@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { dbg } from "./debug";
+import { DEFAULT_AGENT_ARGS, resolveAcpLaunch, type AcpLaunch } from "./acp/launch";
 
 export type Effort = "none" | "low" | "high" | "max";
 
@@ -26,6 +27,10 @@ export interface ExtensionPreferences {
   translateTo: string;
   showReasoning: boolean;
   outputBehavior: "replace" | "copy";
+  /** ACP agent（Agent 命令）的启动命令 / 参数 / 工作目录，解析见 lib/acp/launch.ts */
+  agentCommand: string;
+  agentArgs: string;
+  agentCwd: string;
 }
 
 function asEffort(value: unknown, fallback: Effort): Effort {
@@ -69,7 +74,23 @@ export function prefs(): ExtensionPreferences {
     translateTo: p.translateTo?.trim() || "中文",
     showReasoning: Boolean(p.showReasoning),
     outputBehavior: p.outputBehavior === "copy" ? "copy" : "replace",
+    // Agent 命令的三项都留空也行：command 兜底 /bin/bash，args 兜底 dsh 的 ACP 桥，
+    // cwd 留空表示「用家目录」（真正的展开与校验在 resolveAcpLaunch 里）
+    agentCommand: p.agentCommand?.trim() || "/bin/bash",
+    agentArgs: p.agentArgs?.trim() || DEFAULT_AGENT_ARGS,
+    agentCwd: p.agentCwd?.trim() || "",
   };
+}
+
+/**
+ * Agent 命令要 spawn 什么。
+ *
+ * 单独包一层是为了让「偏好 → spawn 三元组」的解析只有一处：视图里直接拿结果去
+ * `AcpClient.spawn`，不重复做 `~` 展开和参数切分。
+ */
+export function agentLaunch(): AcpLaunch {
+  const p = prefs();
+  return resolveAcpLaunch({ command: p.agentCommand, args: p.agentArgs, cwd: p.agentCwd });
 }
 
 let cachedKey: string | undefined;

@@ -198,6 +198,13 @@
       ]
     },
     {
+      "name": "agent",
+      "title": "Agent",
+      "subtitle": "ACP",
+      "description": "唤起一个真正的 agent（默认 dsh）：读文件、跑命令、改代码，工具调用全程可见。走 ACP，换 agent 只改一条启动命令",
+      "mode": "view"
+    },
+    {
       "name": "chat-selection",
       "title": "Chat with Selection",
       "subtitle": "DeepSeek",
@@ -352,6 +359,29 @@
           "value": "copy"
         }
       ]
+    },
+    {
+      "name": "agentCommand",
+      "title": "Agent Command",
+      "description": "Agent 命令要启动的可执行文件。默认 /bin/bash（配合 Agent Arguments 跑下面那条脚本）",
+      "type": "textfield",
+      "required": false,
+      "default": "/bin/bash"
+    },
+    {
+      "name": "agentArgs",
+      "title": "Agent Arguments",
+      "description": "Agent Command 的参数。默认是 dsh 的 ACP 桥；也可指向 codex-acp 等任何 ACP agent。支持 ~ 和引号",
+      "type": "textfield",
+      "required": false,
+      "default": "~/.dsh/profiles/acp-enhanced/node_modules/dsh-acp-enhanced/scripts/dsh-acp-zed.sh"
+    },
+    {
+      "name": "agentCwd",
+      "title": "Agent Working Directory",
+      "description": "agent 的工作目录，它的相对路径都基于这里。留空 = 家目录。建议填你常改的项目目录",
+      "type": "textfield",
+      "required": false
     }
   ],
   "dependencies": {
@@ -366,6 +396,7 @@
     "build": "ray build -e dist",
     "dev": "ray develop",
     "verify": "node scripts/verify-migration.mjs",
+    "verify:acp": "node scripts/verify-acp.mjs",
     "lint": "ray lint",
     "fix-lint": "ray lint --fix"
   },
