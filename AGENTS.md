@@ -39,6 +39,30 @@ npx tsc --noEmit   # 类型检查，CI 友好、无副作用
 >
 > **改完代码的验收顺序**：`npx tsc --noEmit` → `npm run lint` → 在 Raycast 里手动跑一遍对应命令。
 
+## 查 Raycast 官方文档
+
+文档站（`developers.raycast.com`）是 GitBook，**别靠搜索引擎、也别抓 HTML**，有四个更靠谱的入口：
+
+| 入口 | 用法 |
+|---|---|
+| 索引 | `https://developers.raycast.com/llms.txt` —— 全部页面 + 一句话摘要 |
+| 全量语料 | `https://developers.raycast.com/llms-full.txt` —— 一次拿全（约 1MB / 106 页），适合整体扫 |
+| 单页 Markdown | 页面 URL 后加 `.md`，如 `/api-reference/user-interface/list.md` |
+| 直接问文档 | 页面 URL 加 `?ask=<自然语言问题>`（可选 `&goal=<最终目标>`），返回答案 + 出处 |
+
+```bash
+curl -sSL "https://developers.raycast.com/llms-full.txt" -o /tmp/rc-docs.txt   # 全量
+curl -sSL "https://developers.raycast.com/api-reference/user-interface/detail.md"  # 单页
+```
+
+两条经验：
+
+- **类型定义才是最终事实来源**。文档会滞后；判断"某个 prop / API 到底存不存在"，
+  以 `node_modules/@raycast/api/types/index.d.ts` 为准（本仓库装的 2.3.1 就是 npm 上的 `latest`）。
+  约束 12 的结论就是这么来的：整个 API 里只有 2 处 `markdown?:`。
+- **截图不等于能力**。文档/商店里的 Quick AI、AI Chat、AI Commands 窗口都是 **Raycast 原生**的，
+  扩展只能注册 `tools` 供其调用，渲染不了那种「无侧栏 + 满宽输入」的界面（见约束 12）。
+
 ## 目录地图
 
 ```
