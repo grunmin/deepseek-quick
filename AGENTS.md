@@ -301,11 +301,23 @@ Raycast 会直接拒绝：
 
 ### 12. Raycast UI 的硬限制（别浪费时间找开关）
 
-- `List` 行：固定行高 + `nowrap`，**无法显示多行长文本**。
-- `List.isShowingDetail` 的分栏比例：**固定，不可调**。
-- `Detail`：可以满宽 + Markdown + 滚动，但**没有任何输入能力**（搜索栏是 `List` 独有的）。
-- 「满宽 / 可读长文本 / 有输入框」三者只能同时满足两个，ChatView 选的是
-  「满宽 + 可读」，输入靠 `List` 的搜索栏，导航靠下拉。
+以下都是**查过类型定义 + 官方文档**确认过的，不是"没找到"：
+
+- `List` 行：固定行高 + `nowrap`（`.standard-list-item__root`），**无法显示多行长文本**。
+- **`List.isShowingDetail` 必然分左右两栏**，左栏（条目列）**没有任何 prop 能隐藏** ——
+  官方描述是「在条目**右侧**加一块区域」。想"全宽无侧边栏"只能改用 `Detail`。
+- `Detail`：可以满宽 + Markdown + 滚动，但**完全没有输入能力**（搜索栏是 `List` 独有的）。
+- `Form`：有输入，但 `Form.Description` 的 `text` 是**纯文本，不渲染 Markdown**。
+- 整个 `@raycast/api` 里只有 **2 个** `markdown?:` 属性（`Detail`、`List.Item.Detail`）——
+  没有第三个能渲染 Markdown 的地方。
+
+⇒ 「满宽 / 可读 Markdown / 常驻输入框」三者只能同时满足两个。
+
+**ChatView 的选择**：`List` + `isShowingDetail` = 「Markdown + 常驻输入框」，代价是左栏始终占位。
+
+> 已讨论过「默认铺满 + 可配置开侧边栏」：技术可行，但**铺满模式必须改用 `Detail`，
+> 会失去"搜索栏直接打字 ↵ 发送"**（只能退化成 `⌘↵` 打开 Form 输入）。权衡后决定**维持现状**。
+> 再提这个需求前，先确认能接受输入多一步。
 
 ### 13. 命令级偏好**不能**与扩展级同名
 
@@ -467,6 +479,9 @@ type PromptOverrides = Partial<Record<PromptCommand, string>>;
   `feat(chat): ...` / `fix(stream): ...` / `docs: ...` / `refactor: ...` / `chore: ...`
 - 分支：`feat/*`、`fix/*`、`docs/*`。
 - **提交前必做**：`npx tsc --noEmit` 和 `npm run lint` 都通过。
+- **每次关键改动都要 commit & push**，并保持 `main` 与 `origin/main` 同步
+  （`git status -sb` 应显示 `## main...origin/main`，没有 ahead/behind）。
+  这是本仓库的明确约定 —— 不要攒着一堆改动不推。
 - **绝不要提交**：API Key、`.raycast/`、`raycast-env.d.ts`、`node_modules/`、`dist/`、`/tmp` 日志。
 
 ## 改动自检清单
