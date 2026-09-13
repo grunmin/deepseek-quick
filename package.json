@@ -50,8 +50,8 @@
       "name": "chat-selection",
       "title": "Chat with Selection",
       "subtitle": "DeepSeek",
-      "description": "读当前选中的文字 / Finder 里的图片，开一段对话",
-      "mode": "view"
+      "description": "读当前选中的文字 / Finder 里的图片，直接开一段对话",
+      "mode": "no-view"
     },
     {
       "name": "history",

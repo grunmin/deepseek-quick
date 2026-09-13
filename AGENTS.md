@@ -61,9 +61,9 @@ src/
   chat.tsx / chat-selection.tsx / history.tsx      ← 7 个命令入口，文件名 = command name
 ```
 
-**入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致，
-且该文件 **default export** 一个 React 组件（`chat-selection.tsx` 是唯一例外：default export 一个
-`async` 函数，因为要在渲染前读选区）。
+**入口约定**：`package.json` → `commands[].name` 必须与 `src/<name>.tsx` 的**文件名**一致。
+`mode: "view"` 的命令 default export 一个 **同步** React 组件；`mode: "no-view"` 的命令
+default export 一个 async 函数（参考 `chat-selection.tsx`）。
 
 ## 架构与数据流
 
@@ -85,9 +85,34 @@ src/
 ```
 chat.tsx → <ChatView>
   - List(filtering={false}) 的**搜索栏 = 输入框**（searchText=draft, onSearchTextChange=setDraft）
-  - 左侧 List.Item = 会话列表；右侧 List.Item.Detail = 当前会话 Markdown
-  - ↵ 主操作 → send(draft) → streamChat → saveConversation → 刷新列表 → setCurrentId
+  - 列表里只有**一个锚点条目**（id="__transcript"），它的 List.Item.Detail = 整个对话 Markdown
+  - 会话列表搬进 searchBarAccessory 的 `List.Dropdown`（⌘P 打开），选中即 switchTo
+  - ↵ 主操作 → send(draft) → streamChat → saveConversation → 刷新下拉 → setCurrentId
 ```
+
+> **为什么不做成「每个会话一个 List.Item」**（见约束 7）：`List` 行高固定且现在是
+> `white-space: nowrap`，一行放不下对话内容；而 `List + Detail` 的分栏比例由 Raycast 内部固定，
+> 扩展无法调整。所以把整个对话放进详情区（占满宽度），列表退化成锚点。
+
+**带选区进来**（`chat-selection`，`mode: "no-view"`）：
+
+```
+Chat with Selection（热键）
+  → chat-selection.tsx: await closeMainWindow()   ← 必须，否则读不到（见约束 10）
+  → seekSelection(): getSelectedText() → 否则 getSelectedFinderItems()
+  → launchCommand({ name: "chat", context: { reference, referenceImages } })
+  → chat.tsx 从 props.launchContext 取出 → <ChatView reference referenceImages />
+  → ChatView: 选区作为 📎 参考内容显示在详情面板，搜索栏保持空白
+  → 用户输入问题 → send() 把参考内容包成 user 消息、拼在问题前面一起提交
+```
+
+> **参考内容 ≠ prompt**（见约束 11）。选区**不能**塞进搜索栏当草稿 —— 搜索栏是 `List`
+> 唯一的输入位，被参考内容占住后用户就没地方输入自己的问题了。
+> 参考内容只显示在右侧详情面板，由 `send()` 在提交时拼进消息。
+>
+> 为什么不做成「Chat 界面里按个键读选区」：Chat 是 view 命令，窗口一起就已经是前台，
+> `getSelectedText()` 必然返回空。读文字只能在「窗口已关、UI 还没渲染」的窗口期完成，
+> 也就是 no-view 命令。**不要**试图在 ChatView 里加读文字的动作，那条路走不通。
 
 - 每条消息都是 `ChatMessage`；带图消息的 `content` 是 `ContentPart[]`。
 - **流式中间态**放在 `pending`，不写进 `messages`；流结束才 append 成完整 assistant 消息。
@@ -161,14 +186,69 @@ DeepSeek 的 `reasoning_effort` 只接受 `low` / `high` / `max`（默认 `high`
 
 否则几条带图对话就会把 `LocalStorage` 撑爆。见 `history.ts` 的 `stripImages()`。
 
-### 7. `ChatView` 必须 `loaded` 之后才渲染列表条目
+### 7. 聊天界面必须是「单锚点 + 满宽详情」，不能每个会话一行
 
-否则 `selectedItemId` 会指向一个尚不存在的会话，Raycast 会把它弹回第一项（视觉上「跳一下」）。
+两个硬约束叠在一起：
+
+- `List` 的行**高度固定**，且 `standard-list-item__root` 是 `white-space: nowrap`、
+  `__subtitle` 是 `text-overflow: ellipsis` —— **一行放不下对话内容**，长回复会被截断。
+- `List + Detail` 的分栏比例由 Raycast 原生 UI 固定，**没有 API 可调**
+  （`List` 只有 `isShowingDetail?: boolean`，社区请求 SplitView 未实现：
+  [raycast/extensions#83](https://github.com/raycast/extensions/issues/83)）。
+
+所以 ChatView 只渲染**一个锚点 `List.Item`**，整个对话放在它的 `List.Item.Detail` 里；
+会话切换走 `searchBarAccessory` 的 `List.Dropdown`。
+另外 `loaded` 之后才渲染条目 —— 否则下拉和锚点会先落到空数据上，视觉上跳一下。
 
 ### 8. 切换 / 删除会话时必须作废在途请求
 
 `switchTo()` 和 `removeConversation()` 都要 `runTokenRef.current += 1` 并 `abort()`，
 否则旧请求的结果会覆盖新会话的内容（`stale()` 守卫）。
+
+### 9. `mode: "view"` 的命令**绝不能**用 `async` 主函数
+
+Raycast 会直接拒绝：
+
+> Async main functions for 'view' or 'menu-bar' commands are unspecified behavior -
+> use a function that returns a view component or declare the command with mode "no-view".
+
+实测后果不是「报错退出」，而是命令被反复重挂载：一秒内 `seekSelection()` 被调用 **2860 次**，
+日志刷爆、界面异常。需要「渲染前先异步拿数据」的场景，正确做法是
+**声明成 `mode: "no-view"`**（见约束 10 的链路），而不是把组件写成 async。
+
+### 10. `getSelectedText()` 读的是**最前台 App**，Raycast 在前台时必然拿到空串
+
+官方文档原文：*Gets the selected text of the **frontmost application***。
+所以只要 Raycast 窗口在前台（命令一启动就是），读出来就是 `""` 或被 reject ——
+参见 [raycast/extensions#11793](https://github.com/raycast/extensions/issues/11793)、
+[#23132](https://github.com/raycast/extensions/issues/23132)。
+
+**正确姿势**：先 `await closeMainWindow()`，把焦点还给用户原来的 App，再读。
+`chat-selection.tsx` 就是这么做的；`QuickAction`（explain/translate/rewrite）能工作，
+是因为它们在命令启动的**早期**读，此时窗口还没抢走焦点。
+
+> 这条和约束 4（deeplink 拿不到选区）是**两个不同的坑**，别混。
+> `getSelectedFinderItems()` 不受此限制 —— Finder 选区与焦点无关，任何时候都能读。
+
+### 11. 参考内容（reference）不能占用输入框
+
+`Chat with Selection` 带进来的选区是**背景资料**，不是 prompt。搜索栏是 `List` 唯一的输入位，
+一旦把参考内容写进 `draft`，用户就没地方输入自己的问题了。
+
+正确做法（`chat-view.tsx`）：
+
+- 参考内容存在独立的 `referenceBlock` state，只渲染在详情面板（`referenceMarkdown()`，超 14 行截断预览）。
+- 用户的问题留在搜索栏。发送时由 `send()` 用 `wrapReference()` 把参考内容包成
+  「背景资料 + 问题」的 user 消息，**只在首条**带上；发送后清空 `referenceBlock`（已进历史）。
+- 需要移除时走 `⌘⇧R` / `⌘K` → 移除参考内容。
+
+### 12. Raycast UI 的硬限制（别浪费时间找开关）
+
+- `List` 行：固定行高 + `nowrap`，**无法显示多行长文本**。
+- `List.isShowingDetail` 的分栏比例：**固定，不可调**。
+- `Detail`：可以满宽 + Markdown + 滚动，但**没有任何输入能力**（搜索栏是 `List` 独有的）。
+- 「满宽 / 可读长文本 / 有输入框」三者只能同时满足两个，ChatView 选的是
+  「满宽 + 可读」，输入靠 `List` 的搜索栏，导航靠下拉。
 
 ## 常见任务
 
@@ -288,6 +368,6 @@ interface Selection { text: string; images: string[] }   // images 是 data URI
 - [ ] `npx tsc --noEmit` 通过
 - [ ] `npm run lint` 通过
 - [ ] 在 Raycast 里手动跑过受影响的命令（`npm run dev`）
-- [ ] 没有触碰上面 8 条硬性约束
+- [ ] 没有触碰上面 12 条硬性约束
 - [ ] 没有把 Key / 生成文件带进提交（`git status` 确认）
 - [ ] 新增命令时，文件名 = `package.json` 的 command name

@@ -1,12 +1,11 @@
 import { Action, ActionPanel, Form, Icon, List, showToast, Toast } from "@raycast/api";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { messageText, streamChat, type ChatMessage } from "../lib/deepseek";
-import { listConversations, saveConversation, deleteConversation, type Conversation } from "../lib/history";
+import { imagePart, messageText, streamChat, type ChatMessage, type ContentPart } from "../lib/deepseek";
+import { listConversations, saveConversation, type Conversation } from "../lib/history";
 import { CHAT_SYSTEM } from "../lib/prompts";
 import { prefs } from "../lib/config";
 import { dbg } from "../lib/debug";
 import { toDataUri } from "../lib/images";
-import { seekSelection } from "../lib/selection";
 import { HistoryView } from "./history-view";
 
 const FLUSH_INTERVAL_MS = 80;
@@ -29,24 +28,31 @@ export function ChatView({
   initialMessages,
   initialConversationId,
   title = "DeepSeek Chat",
-  prefillText = "",
-  prefillImages = [],
+  reference = "",
+  referenceImages = [],
 }: {
   initialMessages?: ChatMessage[];
   initialConversationId?: string;
   title?: string;
-  /** 进来自动填进输入框的文字（用于「和选中内容对话」） */
-  prefillText?: string;
-  /** 进来自动挂上的图片（data URI） */
-  prefillImages?: string[];
+  /**
+   * 参考内容：不作为 prompt，而是作为「背景资料」挂在对话开头。
+   * 展示在右侧详情面板里，用户随后在搜索栏输入自己的问题。
+   */
+  reference?: string;
+  /** 参考图片（data URI），随参考内容一起作为背景资料 */
+  referenceImages?: string[];
 }) {
   const p = prefs();
 
   const [messages, setMessages] = useState<ChatMessage[]>(
     initialMessages && initialMessages.length > 0 ? initialMessages : [{ role: "system", content: CHAT_SYSTEM }],
   );
-  const [draft, setDraft] = useState(prefillText);
-  const [attachedImages, setAttachedImages] = useState<string[]>(prefillImages);
+  const [draft, setDraft] = useState("");
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  // 参考内容独立于输入框：搜出栏只放用户的问题，参考内容只显示在详情面板。
+  const [referenceBlock, setReferenceBlock] = useState<ReferenceBlock | null>(() =>
+    reference.trim() || referenceImages.length > 0 ? makeReferenceBlock(reference, referenceImages) : null,
+  );
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState<string>();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -71,31 +77,56 @@ export function ChatView({
     });
   }, []);
 
+  /**
+   * 强制开一段全新对话。
+   *
+   * 刻意不做「已经在新对话里就跳过」的守卫：⌘N 的语义是「给我一段干净的」，
+   * 即使当前就在新对话状态（比如刚挂上参考内容、或想清空重来）也应该重置。
+   * 之前复用了 switchTo 的去重守卫，导致在「新对话」状态下按 ⌘N 直接 return，
+   * 表现就是「发起新对话无效」。
+   */
+  /** 作废在途请求 + 清掉所有临时状态，切会话/开新对话共用 */
+  const resetTransient = useCallback(() => {
+    runTokenRef.current += 1; // 让在途请求的结果失效，避免覆盖新会话
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setDraft("");
+    setError(undefined);
+    setPending(null);
+    setReferenceBlock(null);
+  }, []);
+
+  const startNewChat = useCallback(() => {
+    dbg("startNewChat: 重置为全新对话");
+    resetTransient();
+    currentIdRef.current = undefined;
+    setCurrentId(undefined);
+    setMessages([{ role: "system", content: CHAT_SYSTEM }]);
+  }, [resetTransient]);
+
+  /** 下拉里选中某条会话。开新对话请走 startNewChat，别复用这里的去重守卫 */
   const switchTo = useCallback(
     (id: string) => {
       if (id === (currentIdRef.current ?? NEW_CHAT_ID)) return;
       dbg(`switchTo: ${currentIdRef.current ?? "none"} -> ${id}`);
-      runTokenRef.current += 1; // 让在途请求的结果失效，避免覆盖新会话
-      abortRef.current?.abort();
-      abortRef.current = null;
-      setDraft("");
-      setError(undefined);
-      setPending(null);
 
       if (id === NEW_CHAT_ID) {
-        currentIdRef.current = undefined;
-        setCurrentId(undefined);
-        setMessages([{ role: "system", content: CHAT_SYSTEM }]);
+        startNewChat();
         return;
       }
+
+      resetTransient();
       const target = conversations.find((c) => c.id === id);
       if (target) {
         currentIdRef.current = target.id;
         setCurrentId(target.id);
         setMessages(target.messages);
+        dbg(`switchTo: 载入会话 ${target.id} 消息数=${target.messages.length}`);
+      } else {
+        dbg(`switchTo: 找不到会话 ${id}（conversations=${conversations.length}）`);
       }
     },
-    [conversations],
+    [conversations, resetTransient, startNewChat],
   );
 
   const run = useCallback(async (history: ChatMessage[]) => {
@@ -183,70 +214,36 @@ export function ChatView({
           ]
         : trimmed;
 
+      // 参考内容不是 prompt 本身：包成「背景资料 + 我的问题」再发出去。
+      // 只在首条带上（它已经进了对话历史，后续轮次不用重复塞）。
+      const withReference = referenceBlock
+        ? [{ role: "user" as const, content: wrapReference(referenceBlock) }, { role: "user" as const, content }]
+        : [{ role: "user" as const, content }];
+
       setDraft("");
       setAttachedImages([]);
-      const userMessage: ChatMessage = { role: "user", content };
-      const next: ChatMessage[] = [...messages, userMessage];
+      setReferenceBlock(null);
+      const next: ChatMessage[] = [...messages, ...withReference];
       setMessages(next);
       await run(next);
     },
-    [attachedImages, messages, run],
+    [attachedImages, messages, referenceBlock, run],
   );
 
-  /** 读一次当前选区（选中文字或 Finder 选中的图片），可以直接发送或先填进输入框 */
-  const grabSelection = useCallback(
-    async (mode: "fill" | "send") => {
-      const sel = await seekSelection();
-      if (!sel.text && sel.images.length === 0) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: "没读到选中内容",
-          message: "先在别的 App 里选中文字，或在 Finder 里选中图片",
-        });
-        return;
-      }
-      if (mode === "send") {
-        await send(sel.text, sel.images);
-        return;
-      }
-      setDraft(sel.text);
-      if (sel.images.length > 0) setAttachedImages(sel.images);
-      await showToast({
-        style: Toast.Style.Success,
-        title: "已填入输入框",
-        message: sel.images.length > 0 ? `文字 ${sel.text.length} 字 + ${sel.images.length} 张图` : `${sel.text.length} 字`,
-      });
-    },
-    [send],
-  );
+  /** 不想提问、只想让模型看/分析参考内容时，直接把它发出去 */
+  const sendReference = useCallback(async () => {
+    if (!referenceBlock) return;
+    const wrapped = wrapReference(referenceBlock);
+    setDraft("");
+    setReferenceBlock(null);
+    const next: ChatMessage[] = [...messages, { role: "user", content: wrapped }];
+    setMessages(next);
+    await run(next);
+  }, [messages, referenceBlock, run]);
 
-  /** 从列表里删掉一条会话；如果删的正好是当前打开的，就退回新对话 */
-  const removeConversation = useCallback(
-    async (id: string) => {
-      await deleteConversation(id);
-      await showToast({ style: Toast.Style.Success, title: "已删除会话" });
-      setConversations(await listConversations());
+  const transcript = transcriptMarkdown(messages, pending, error, referenceBlock);
 
-      if (currentIdRef.current === id) {
-        // 当前正在看的就是被删的这条：连同在途请求一起作废，切回新对话
-        runTokenRef.current += 1;
-        abortRef.current?.abort();
-        abortRef.current = null;
-        currentIdRef.current = undefined;
-        setCurrentId(undefined);
-        setPending(null);
-        setError(undefined);
-        setDraft("");
-        setMessages([{ role: "system", content: CHAT_SYSTEM }]);
-      }
-    },
-    [],
-  );
-
-  const selectedId = currentId ?? NEW_CHAT_ID;
-  const transcript = transcriptMarkdown(messages, pending, error);
-
-  const actions = (conversationId?: string) => (
+  const actions = () => (
     <ActionPanel>
       {/* ↵ 主操作 = 发送搜索栏里的内容 */}
       <Action title="发送" icon={Icon.ArrowRight} onAction={() => send(draft)} />
@@ -260,27 +257,29 @@ export function ChatView({
         target={<AttachForm draft={draft} attached={attachedImages} onSubmit={send} />}
       />
 
-      <ActionPanel.Section>
-        <Action
-          title="读当前选区填入输入框"
-          icon={Icon.TextSelection}
-          shortcut={{ modifiers: ["cmd", "shift"], key: "u" }}
-          onAction={() => grabSelection("fill")}
-        />
-        <Action
-          title="读当前选区直接发送"
-          icon={Icon.ArrowRight}
-          shortcut={{ modifiers: ["cmd", "shift"], key: "return" }}
-          onAction={() => grabSelection("send")}
-        />
-      </ActionPanel.Section>
+      {referenceBlock ? (
+        <ActionPanel.Section>
+          <Action
+            title="只发参考内容（不提问）"
+            icon={Icon.Eye}
+            shortcut={{ modifiers: ["cmd", "shift"], key: "return" }}
+            onAction={sendReference}
+          />
+        </ActionPanel.Section>
+      ) : null}
 
       <ActionPanel.Section>
         <Action
           title="新对话"
           icon={Icon.Plus}
           shortcut={{ modifiers: ["cmd"], key: "n" }}
-          onAction={() => switchTo(NEW_CHAT_ID)}
+          onAction={startNewChat}
+        />
+        <Action
+          title="清空当前对话"
+          icon={Icon.Trash}
+          shortcut={{ modifiers: ["cmd"], key: "z" }}
+          onAction={startNewChat}
         />
         <Action.Push
           title="会话记录（两栏浏览）"
@@ -290,14 +289,16 @@ export function ChatView({
         />
       </ActionPanel.Section>
 
-      {conversationId ? (
+      {referenceBlock ? (
         <ActionPanel.Section>
           <Action
-            title="删除这条会话"
-            icon={Icon.Trash}
-            style={Action.Style.Destructive}
-            shortcut={{ modifiers: ["cmd"], key: "x" }}
-            onAction={() => removeConversation(conversationId)}
+            title="移除参考内容"
+            icon={Icon.XMarkCircle}
+            shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+            onAction={async () => {
+              setReferenceBlock(null);
+              await showToast({ style: Toast.Style.Success, title: "已移除参考内容" });
+            }}
           />
         </ActionPanel.Section>
       ) : null}
@@ -325,57 +326,48 @@ export function ChatView({
       navigationTitle={title}
       searchText={draft}
       onSearchTextChange={setDraft}
-      selectedItemId={loaded ? selectedId : undefined}
-      onSelectionChange={(id) => {
-        if (loaded && id && id !== selectedId) switchTo(id);
-      }}
-      searchBarPlaceholder={placeholder(busy, attachedImages.length)}
+      // 会话切换搬进搜索栏下拉，列表里不再为每个会话占一行 ——
+      // Raycast 的 List 行高固定且 nowrap，一行放不下对话内容，
+      // 所以把整个对话放进右侧主区域，左侧只留一个锚点。
+      searchBarAccessory={
+        loaded ? (
+          <List.Dropdown
+            tooltip="切换会话"
+            value={currentId ?? NEW_CHAT_ID}
+            storeValue={false}
+            onChange={(id) => {
+              dbg(`dropdown 选中 ${id} (当前 currentId=${currentIdRef.current ?? "none"})`);
+              switchTo(id);
+            }}
+          >
+            <List.Dropdown.Item title="新对话" value={NEW_CHAT_ID} icon={Icon.Plus} />
+            {conversations.length > 0 ? (
+              <List.Dropdown.Section title="历史会话">
+                {conversations.map((c) => (
+                  <List.Dropdown.Item
+                    key={c.id}
+                    value={c.id}
+                    title={c.title}
+                    icon={Icon.SpeechBubble}
+                  />
+                ))}
+              </List.Dropdown.Section>
+            ) : null}
+          </List.Dropdown>
+        ) : null
+      }
+      searchBarPlaceholder={placeholder(busy, attachedImages.length, referenceBlock !== null)}
     >
       {loaded ? (
-        <>
-          <List.Item
-            id={NEW_CHAT_ID}
-            icon={Icon.Plus}
-            title="新对话"
-            subtitle="开一段新的对话"
-            detail={
-              <List.Item.Detail
-                markdown={selectedId === NEW_CHAT_ID ? transcript : "_左侧选中的会话会显示在这里。_"}
-              />
-            }
-            actions={actions()}
-          />
-
-          {conversations.length > 0 ? (
-            <List.Section title="历史会话">
-              {conversations.map((c) => (
-                <List.Item
-                  key={c.id}
-                  id={c.id}
-                  icon={Icon.SpeechBubble}
-                  title={c.title}
-                  subtitle={`${c.messages.filter((m) => m.role !== "system").length} 条`}
-                  accessories={[{ date: new Date(c.updatedAt) }]}
-                  detail={
-                    <List.Item.Detail
-                      markdown={c.id === selectedId ? transcript : previewMarkdown(c.messages)}
-                    />
-                  }
-                  actions={actions(c.id)}
-                />
-              ))}
-            </List.Section>
-          ) : (
-            <List.Item
-              id="__empty"
-              icon={Icon.Info}
-              title="还没有历史会话"
-              subtitle="发第一条消息就会自动保存"
-              detail={<List.Item.Detail markdown={transcript} />}
-              actions={actions()}
-            />
-          )}
-        </>
+        <List.Item
+          id="__transcript"
+          title={title}
+          subtitle={
+            conversations.find((c) => c.id === currentId)?.title ?? "新对话（发第一条消息会自动保存）"
+          }
+          detail={<List.Item.Detail markdown={transcript} />}
+          actions={actions()}
+        />
       ) : null}
     </List>
   );
@@ -430,8 +422,9 @@ function AttachForm({
   );
 }
 
-function placeholder(busy: boolean, imageCount: number): string {
+function placeholder(busy: boolean, imageCount: number, hasReference: boolean): string {
   if (busy) return "生成中…可以先打字，↵ 会先打断";
+  if (hasReference) return "已挂参考内容 · 直接问关于它的问题，↵ 发送";
   if (imageCount > 0) return `已附 ${imageCount} 张图，输入问题后 ↵ 发送`;
   return "输入消息，按 ↵ 发送";
 }
@@ -450,19 +443,15 @@ function transcriptPlain(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
-function previewMarkdown(msgs: ChatMessage[]): string {
+function transcriptMarkdown(
+  messages: ChatMessage[],
+  pending: Pending | null,
+  error: string | undefined,
+  reference: ReferenceBlock | null,
+): string {
   const blocks: string[] = [];
-  for (const message of msgs) {
-    if (message.role === "system") continue;
-    const text = messageText(message);
-    if (!text) continue;
-    blocks.push(message.role === "user" ? `**你**\n\n> ${text.replace(/\n/g, "\n> ")}` : `**DeepSeek**\n\n${text}`);
-  }
-  return blocks.length > 0 ? blocks.join("\n\n---\n\n") : "_这个会话还没有内容。_";
-}
 
-function transcriptMarkdown(messages: ChatMessage[], pending: Pending | null, error: string | undefined): string {
-  const blocks: string[] = [];
+  if (reference) blocks.push(referenceMarkdown(reference));
 
   for (const message of messages) {
     if (message.role === "system") continue;
@@ -486,4 +475,60 @@ function transcriptMarkdown(messages: ChatMessage[], pending: Pending | null, er
   if (blocks.length === 0) return "_在搜索栏输入消息，按 `↵` 发送。_";
 
   return blocks.join("\n\n---\n\n");
+}
+
+/* ────────────────────────── 参考内容（不是 prompt） ────────────────────────── */
+
+const PREVIEW_LINES = 14;
+
+interface ReferenceBlock {
+  text: string;
+  images: string[];
+  preview: string;
+  truncated: boolean;
+}
+
+/**
+ * 参考内容只作为「背景资料」，不占输入框。
+ *
+ * 预览限制行数：详情面板要留给对话本身，参考内容不该把它挤掉。
+ */
+function makeReferenceBlock(text: string, images: string[]): ReferenceBlock {
+  const trimmed = text.trim();
+  const lines = trimmed.split("\n");
+  const truncated = lines.length > PREVIEW_LINES;
+  return {
+    text: trimmed,
+    images,
+    preview: truncated ? lines.slice(0, PREVIEW_LINES).join("\n") : trimmed,
+    truncated,
+  };
+}
+
+/** 拼成一条提交给模型的 user 消息：背景资料在前，用户的问题在后 */
+function wrapReference(block: ReferenceBlock): string | ContentPart[] {
+  const header = "以下是我的背景资料 / 参考内容，请先读它，然后回答我后面的问题。";
+  const body = `${header}\n\n--- 参考内容开始 ---\n${block.text}\n--- 参考内容结束 ---`;
+
+  if (block.images.length === 0) return body;
+  return [
+    { type: "text", text: body },
+    { type: "text", text: "参考图片：" },
+    ...block.images.map(imagePart),
+  ];
+}
+
+/** 详情面板里参考内容的展示块 */
+function referenceMarkdown(block: ReferenceBlock): string {
+  const parts = ["### 📎 参考内容", "> _以下内容作为背景资料，不是你的提问_"];
+
+  if (block.preview) {
+    parts.push(block.preview.replace(/\n/g, "\n> ").replace(/^(?!>)/, "> "));
+    if (block.truncated) {
+      parts.push(`> _…（已截断，完整 ${block.text.length} 字会完整发给模型）_`);
+    }
+  }
+  if (block.images.length > 0) parts.push(`> 🖼 附 ${block.images.length} 张参考图片`);
+
+  return parts.join("\n\n");
 }

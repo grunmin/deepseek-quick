@@ -10,10 +10,10 @@ export interface Selection {
 }
 
 /**
- * 读「当前选区」：优先拿选中的文字，拿不到再看 Finder 里是不是选了图片。
+ * 读「当前选区」：优先拿选中的文字，没有再看 Finder 里是不是选了图片。
  *
- * 两个来源互斥：Finder 里选中图片时，系统「拷贝」出来的通常是一堆文件路径，
- * 所以 text 要忽略掉看起来像图片路径的内容，避免把路径当正文发出去。
+ * ⚠️ 调用方负责先把 Raycast 窗口关掉：`getSelectedText()` 读的是**最前台 App**
+ * 的选中文本，Raycast 自己在前台时只会拿到空字符串（见 README「踩过的坑」）。
  */
 export async function seekSelection(): Promise<Selection> {
   let text = "";
@@ -23,18 +23,24 @@ export async function seekSelection(): Promise<Selection> {
     dbg(`seekSelection: getSelectedText 失败 ${String(err).slice(0, 200)}`);
   }
 
-  if (text && !looksLikeImagePaths(text)) {
-    dbg(`seekSelection: 拿到文本 ${text.length} 字符`);
-    return { text, images: [] };
+  if (text) {
+    if (looksLikeFilePaths(text)) {
+      // Finder 里选中图片时，系统「拷贝」出来的是文件路径列表，
+      // 当正文发出去没意义 —— 忽略它，转去读图片本身。
+      dbg("seekSelection: 文本是文件路径，忽略，转读图片");
+    } else {
+      dbg(`seekSelection: 拿到文本 ${text.length} 字符`);
+      return { text, images: [] };
+    }
   }
 
   const images = await finderImages();
-  dbg(`seekSelection: 文本被忽略(${text.length} 字符) 图片 ${images.length} 张`);
-  return { text: images.length > 0 ? "" : text, images };
+  dbg(`seekSelection: 文本不可用，图片 ${images.length} 张`);
+  return { text: "", images };
 }
 
-/** 从文案判断选中的是不是「一堆文件路径」（Finder 选中文件时会这样） */
-function looksLikeImagePaths(text: string): boolean {
+/** 判断选中的是不是「一堆图片文件路径」（Finder 选中文件时会这样） */
+function looksLikeFilePaths(text: string): boolean {
   const lines = text
     .split("\n")
     .map((line) => line.trim())
