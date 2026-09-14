@@ -77,6 +77,7 @@ src/
     deepseek.ts      SSE 流式客户端 streamChat()、ContentPart/imagePart/textPart/messageText
     prompts.ts       各命令的**内置** system prompt（纯字符串常量，无逻辑）
     history.ts       LocalStorage 历史存储：read/save/delete/import + **损坏保护**、剥图片、限 200 条
+    agent-sessions.ts History 里实时列举 **agent 侧**会话（session/list，不镜像内容、用完即收进程）
     images.ts        图片文件路径 → data URI（isImagePath / toDataUri）
     selection.ts     seekSelection()：统一读取「当前选区」（文字优先，否则 Finder 图片）
     prompt-config.ts 每命令 system prompt 覆盖（LocalStorage）+ resolveSystemPrompt()
@@ -95,7 +96,7 @@ src/
     result-view.tsx  结果页：流式渲染 + 主操作（替换/复制）+ ⌘N 继续讨论 + 换配置重新生成
     chat-view.tsx    对话主界面（搜索栏当输入框）+ 会话切换/删除 + 附件表单
     agent-view.tsx   Agent 面板：agent 进程 + 工具时间线 + 审批对话框 + 会话下拉
-    history-view.tsx 两栏历史浏览器（List.isShowingDetail）
+    history-view.tsx 两栏历史浏览器（List.isShowingDetail）+「对话 / Agent 会话」两分区
     prompt-config-view.tsx  Configure Prompts 界面（List + 多行 Form.TextArea）
     chat-presets-view.tsx   Chat Presets 管理界面（List + Form）
     history-backup-view.tsx Backup History：导出 / 导入 / 迁移包 / 损坏抢救
@@ -236,6 +237,18 @@ agent.tsx → <AgentView>
   - 三档共同的一条：**本轮最后一段正文 = 结论，永远完整显示**。流式期间正在写的那段
     天然是最后一段，所以边写边读读到的就是结论本身。
   - 默认值走扩展偏好 `agentDetail`；`⌘K` →「过程显示（本次窗口）」是**临时覆盖**（不写设置）。
+- **History 里的「Agent 会话」是实时列举的，本地不留副本**（`lib/agent-sessions.ts`）：
+  起一个短命 agent 进程 `session/list` 拿台账（id / 标题 / cwd / updatedAt），用完立刻
+  `dispose()`；`↵` 时把 `sessionId` + 该会话自己的 `cwd` 交给 `AgentView`
+  （`initialSessionId` / `initialCwd`），由它 `session/load` 重放历史。
+  - **故意不镜像内容**：正本在 agent 的会话存储里（dsh web / TUI 共用），镜像必然漂移，
+    还会多一个要进迁移包（约束 16）的 key。所以这条链路**没有新增任何存储**。
+  - 这次查询是**秒级**的（实测 459 条会话：握手 ~1s + 扫会话库 ~2s），所以
+    `listAgentSessions()` 合并同一时刻的在途调用（StrictMode 双跑效应）并带 **15s 短缓存**；
+    `force` 给刷新动作用来跳过缓存。TTL 别调长：刚跑完的会话得尽快出现在列表里。
+  - 列表要顶得住真实体量（实测 458 条）：按 `updatedAt` 倒序、默认折叠「没有标题 = 建了没跑过」
+    的空会话、可按 cwd 筛选、一次最多铺 60 条，余下的用提示行说明。
+  - 列不出来时（agent 没起来 / 配置有误）只让这一个分区降级成一个提示行，聊天历史照常显示。
 - 会话级配置（模型 / 推理强度 / 权限预设 / agent 预设）**不在扩展里维护目录**：
   agent 在 `session/new` 的响应和 `config_option_update` 里报上来，UI 只做展示与
   `session/set_config_option` / `session/set_mode` 的回写。所以换 agent 不用改代码。
@@ -567,6 +580,10 @@ Raycast 的扩展存储**不跨设备同步**（Cloud Sync 是 Pro 功能），�
 - **`prompt` 请求不设超时**（agent 跑工具可能好几分钟），但 `initialize` 设 30s：让
   「agent 起不来」尽早报出来，而不是永远转圈。子进程一死，所有挂起请求会被立即 reject，
   错误里带上 **stderr 尾巴** —— 那是排查启动失败的唯一线索。
+- **History 推进来的 `initialSessionId` 只能消费一次，而且必须等 `stale()` 检查过了再标记
+  「已用」**（`agent-view.tsx` 的 `bootRef`）。若读到就清空，StrictMode 的第一遍会在
+  `initialize` 的 await 上被作废，第二遍便退回「开新会话」—— 用户从 History 点进来看到的
+  却是空面板。反之，用户点「重启 agent」是想要新会话，所以消费过就不再回载。
 
 ## 常见任务
 
@@ -719,6 +736,15 @@ interface PresetRunBase { system: string; model: string; effort: Effort }
 
 /** 偏好 → spawn 三元组；args 已展开 ~、cwd 已校验存在 */
 interface AcpLaunch { command: string; args: string[]; cwd: string }
+
+/**
+ * History 的「Agent 会话」分区用的台账条目（`lib/agent-sessions.ts`）。
+ * 只有这几项 —— **会话内容不在本地**，`↵` 时靠 sessionId + cwd 去 agent 那边 loadSession。
+ * title 缺席 = 建了没跑过的空会话（默认折叠，见架构第 6 节）。
+ */
+interface AgentSessionInfo { sessionId: string; title?: string; cwd?: string; updatedAt?: number }
+/** 让 AgentView 能直接接回一条既有会话（History → Agent 的入口） */
+interface AgentViewProps { initialSessionId?: string; initialCwd?: string }
 
 /** 过程显示档位（见架构第 6 节）；默认值来自扩展偏好 agentDetail */
 type ProcessDetail = "minimal" | "concise" | "detailed";

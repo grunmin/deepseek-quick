@@ -357,6 +357,22 @@ try {
   const sessions = await client.listSessions();
   ok("session/list 里能找到这个会话", sessions.some((item) => item.sessionId === sid));
 
+  // History 的「Agent 会话」分区就靠这几项做台账：标题当行标题、cwd 在 loadSession 时回落、
+  // updatedAt 排序。字段一改名，那边不会报错、只会默默变空 —— 所以钉在这里
+  {
+    const mine = sessions.find((item) => item.sessionId === sid);
+    ok("会话台账带 cwd（History 列表要显示，也要拿它回载）", mine?.cwd === cwd);
+    ok("会话台账的 updatedAt 能解析成时间", Number.isFinite(Date.parse(mine?.updatedAt ?? "")));
+    ok(
+      "title 要么是字符串、要么缺席（空会话没标题是正常的）",
+      sessions.every((item) => item.title === undefined || item.title === null || typeof item.title === "string"),
+    );
+    ok(
+      "按 updatedAt 能排出一个非空的时间序",
+      sessions.filter((item) => Number.isFinite(Date.parse(item.updatedAt ?? ""))).length > 0,
+    );
+  }
+
   sink = new acp.TranscriptModel();
   sink.startReplay();
   await client.loadSession(sid, cwd);

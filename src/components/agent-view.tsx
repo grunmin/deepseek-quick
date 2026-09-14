@@ -56,7 +56,16 @@ const DETAIL_LEVELS: { value: ProcessDetail; title: string }[] = [
   { value: "detailed", title: "详细：工具卡片 + 完整输出 / diff" },
 ];
 
-export function AgentView() {
+/**
+ * 从 History 推进来的入口参数：带着一个**既有 agent 会话 id** 启动，走 `session/load` 接回去。
+ * `cwd` 用会话自己记的那个（`session/list` 会给），拿不到才回落到偏好里的工作目录。
+ */
+export interface AgentViewProps {
+  initialSessionId?: string;
+  initialCwd?: string;
+}
+
+export function AgentView({ initialSessionId, initialCwd }: AgentViewProps) {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("正在启动 agent…");
   const [draft, setDraft] = useState("");
@@ -76,6 +85,14 @@ export function AgentView() {
   const sessionRef = useRef<string | undefined>(undefined);
   /** 启动时解析出来的工作目录，切会话/开新会话都要带上它 */
   const cwdRef = useRef<string>(homedir());
+  /**
+   * 「本次启动要接回的会话」只在**第一次**启动时消费（History 里按 ↵ 进来的场景）。
+   *
+   * 不能简单地在读到后就清空：StrictMode 会跑 `effect → cleanup → effect`，第一遍读取会
+   * 立刻被作废 —— 只有活过 `stale()` 检查的那一代才允许把它标记成已消费（见 startAgent）。
+   * 之后用户点「重启 agent」是想要一个新会话，所以消费过就不再用它。
+   */
+  const bootRef = useRef({ sessionId: initialSessionId, cwd: initialCwd, used: false });
   /** 审批对话框还开着时，用户按「停止」必须把它以 cancelled 回执掉，否则 agent 会一直等 */
   const pendingPermissionRef = useRef<((optionId: string | null) => void) | null>(null);
   /** 每次 startAgent / 卸载都自增：让上一轮异步流程的结果失效（StrictMode 会跑两遍 effect） */
@@ -245,15 +262,42 @@ export function AgentView() {
       }
       dbg(`agent: 握手完成 loadSession=${Boolean(capabilities.loadSession)}`);
 
-      const session = await client.newSession(launch.cwd);
-      if (stale()) {
-        client.dispose();
-        return;
+      // History 里按 ↵ 进来的：接回那条既有会话（agent 会把历史用 session/update 重放一遍）
+      const boot = bootRef.current;
+      if (boot.sessionId && !boot.used && capabilities.loadSession !== false) {
+        setStatus("正在载入会话…");
+        modelRef.current.startReplay();
+        let loaded: { modes?: SessionModeStateWire; configOptions?: SessionConfigOptionWire[] };
+        try {
+          loaded = await client.loadSession(boot.sessionId, boot.cwd || launch.cwd);
+        } finally {
+          // 载入中途失败也要收掉重放模式，否则后续实时的 user_message_chunk 会被当成新的一轮
+          modelRef.current.endReplay();
+        }
+        if (stale()) {
+          client.dispose();
+          return;
+        }
+        boot.used = true;
+        sessionRef.current = boot.sessionId;
+        setCurrentId(boot.sessionId);
+        if (loaded.modes) modelRef.current.modes = loaded.modes;
+        if (loaded.configOptions) modelRef.current.configOptions = loaded.configOptions;
+        dbg(`agent: 已接回会话 ${boot.sessionId}`);
+      } else {
+        if (boot.sessionId && capabilities.loadSession === false) {
+          dbg("agent: 未声明 loadSession，改开新会话");
+        }
+        const session = await client.newSession(launch.cwd);
+        if (stale()) {
+          client.dispose();
+          return;
+        }
+        sessionRef.current = session.sessionId;
+        setCurrentId(session.sessionId);
+        if (session.modes) modelRef.current.modes = session.modes;
+        if (session.configOptions) modelRef.current.configOptions = session.configOptions;
       }
-      sessionRef.current = session.sessionId;
-      setCurrentId(session.sessionId);
-      if (session.modes) modelRef.current.modes = session.modes;
-      if (session.configOptions) modelRef.current.configOptions = session.configOptions;
       syncSessionState();
 
       setReady(true);

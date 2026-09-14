@@ -67,7 +67,7 @@
 | 🛠 Agent（ACP） | 热键唤起，把任务交给**真正的 agent**（默认 dsh）：读文件、跑命令、改代码，工具调用按时间线渲染，审批弹原生对话框。走 ACP，换 agent 只改一条启动命令 |
 | 🖼 读图 | `Ask About Image` 或对话里附加图片 |
 | 📋 替换或复制 | 结果页主操作可直接替换选中的文本，或只复制 |
-| 🕘 历史记录 | 自动保存，可搜索、可续聊、可删除，本地存储不上云 |
+| 🕘 历史记录 | 自动保存，可搜索、可续聊、可删除，本地存储不上云；另有一个分区实时列出 **agent 侧会话**，`↵` 接回去继续 |
 | 🔑 多种 Key 来源 | 扩展设置 / 环境变量 / `~/.dsh/.credentials.yaml` 三级回退 |
 
 ## 环境要求
@@ -476,6 +476,7 @@ Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时�
 | `⌘K` → 过程显示 | 临时切 `只看结果`（过程收成一行统计）/ `精简` / `详细`（工具卡片 + 完整输出 / diff）。**只影响本次窗口**，默认值在扩展设置的 Agent Process Display 里 |
 | 审批 | agent 要危险操作时弹 Raycast 原生对话框，**允许 / 拒绝**，结果写回 agent；弹窗期间 agent 会等你的答复 |
 | 会话下拉（`⌘P`） | 切换会话 / 开新会话。列表来自 agent 自己的会话存储 —— **dsh web / TUI 建的会话也在这里** |
+| `History` → Agent 会话 | 同一个会话库的另一入口：按时间倒序、显示项目与时间、可按项目筛选、`↵` 用 `session/load` 接回来继续（内容不复制到 Raycast，见[历史记录](#历史记录与继续对话)） |
 | `⌘K` → 会话配置 | 模型 / 推理强度 / 权限模式 / agent 预设。候选是 agent **实时报上来的**，不用在扩展里维护一份目录 |
 | `⌘K` → 斜杠命令 / 技能 | agent 声明的 `/命令`（dsh 的 skills 也在里面），选中即填进输入框 |
 | `⌘⇧C` / `⌘⌥C` | 复制本次回复 / 复制完整对话（含工具输出全文）—— 折叠掉的过程在这里能拿回来 |
@@ -496,10 +497,26 @@ Chat 命令的 Model / Reasoning（Raycast 设置里选中 Chat 那条命令时�
 
 ### 历史记录与继续对话
 
-- 只有 `Chat`（含从快捷命令转进来的对话）会写历史，存在 Raycast 的 `LocalStorage` 里。
-- 最多保留 **200** 条会话，超出后丢弃最旧的。
+- `Chat`（含从快捷命令转进来的对话）会自动写历史，存在 Raycast 的 `LocalStorage` 里；
+  最多保留 **200** 条会话，超出后丢弃最旧的。
 - `History` 命令（或 Chat 里 `⌘⇧H`）打开两栏浏览器：左侧列表 + 右侧内容预览。
-- `⌘K` → **继续这条对话** 从任意一条历史接着聊；`⌘X` 删除。
+  `⌘K` → **继续这条对话** 从任意一条历史接着聊；`⌘X` 删除。
+- History 里还有第二个分区 **「Agent 会话」**，但它和上面的「对话」**来源完全不同**：
+
+| | 对话（Chat） | Agent 会话 |
+|---|---|---|
+| 正本在哪 | Raycast 的 `LocalStorage` | **agent 自己的会话存储**（dsh web / TUI 共用同一份） |
+| History 怎么来的 | 本地读取 | 每次打开 History 用 `session/list` **实时列台账** |
+| 有没有副本 | 有（就是正本） | **没有副本** —— 所以永远不会和 agent 侧不一致 |
+| 怎么继续 | `↵` 直接在 Chat 里续聊 | `↵` 用 `session/load` 在 Agent 面板里接回去 |
+| 进迁移包吗 | 进（`Backup History`） | 不进（内容不归 Raycast 管） |
+| 列表内容 | 全文可搜索、可预览 | 只有标题 / 项目 / 时间；全文进 Agent 面板看 |
+
+> Agent 会话刻意**不镜像一份到本地**：镜像会和 agent 侧漂移（在 dsh web / TUI 继续过的会话，
+> 副本不会知道），还要多一个要迁移的存储 key。代价是打开 History 要**冷启动一次 agent**
+> 去查台账（实测 459 条会话时约 **3.3s**：握手 ~1s + agent 扫会话库 ~2s；15s 内重开走缓存，瞬时），
+> 且列表只有标题 —— agent 那边可能有几百条会话，所以列表按时间倒序、
+> 默认折叠「没跑过内容、没有标题的空会话」，并可按**项目**筛选、一次最多铺 60 条。
 
 ### 数据安全与备份
 
@@ -733,8 +750,9 @@ tail -f /tmp/dsq-debug.log
   已经可用，是这边没做）
 - 工具卡片是**渲染出来的 Markdown**：不是可点击的控件（Raycast 的详情面板本来就没有交互能力），
   路径要去编辑器里打开得自己复制
-- `Agent` 的历史不在 Raycast 里：它用的是 **agent 自己的会话存储**（所以 dsh web / TUI 的会话
-  和它是同一份），因此也不走 `Backup History` 的迁移包
+- `Agent` 的历史**不复制**到 Raycast 里：正本是 **agent 自己的会话存储**（dsh web / TUI 的会话
+  和它是同一份）。`History` 命令会用 `session/list` 把它**列出来**（可按项目筛选、`↵` 接回去继续），
+  但内容仍归 agent 管，因此也不走 `Backup History` 的迁移包
 - 只有会说 ACP 的 agent 能用：`codex-acp` 之类的桥没问题，纯 CLI（只会 `codex exec`）不行
 - 无法从 Raycast 商店安装（这是个人私有扩展）
 
@@ -775,6 +793,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── deepseek.ts         SSE 流式客户端、vision、reasoning_content
 │   │   ├── prompts.ts          各命令的内置 system prompt
 │   │   ├── history.ts          LocalStorage 历史存储（损坏保护、剥图片、限 200 条）
+│   │   ├── agent-sessions.ts   History 里实时列举 agent 侧会话（不镜像内容，用完即收进程）
 │   │   ├── images.ts           图片文件 → data URI
 │   │   ├── selection.ts        「当前选区」统一读取（文字 / Finder 图片）
 │   │   ├── prompt-config.ts    每命令 system prompt 覆盖（LocalStorage）
@@ -783,7 +802,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── use-stream.ts       流式状态 hook（80ms 节流 + 去重）
 │   │   ├── acp/
 │   │   │   ├── client.ts        ACP 客户端：stdio 上手写 NDJSON + JSON-RPC（不引 SDK）
-│   │   │   ├── render.ts        session/update → 对话模型 → Markdown（工具卡片 / diff / 用量）
+│   │   │   ├── render.ts        session/update → 对话模型 → Markdown（三档过程显示 / diff / 用量）
 │   │   │   ├── launch.ts        偏好 → spawn 三元组（展开 ~、切参数、校验 cwd）
 │   │   │   └── types.ts         用到的 ACP 线上类型的最小闭包
 │   │   └── debug.ts            追加写 /tmp/dsq-debug.log
@@ -792,7 +811,7 @@ npx tsc --noEmit # 类型检查（无副作用，CI 友好）
 │   │   ├── result-view.tsx     快捷命令结果页（流式 + 替换/复制 + 继续讨论 + 换配置重新生成）
 │   │   ├── chat-view.tsx       多轮对话主界面
 │   │   ├── agent-view.tsx      Agent 面板（agent 进程 + 工具时间线 + 审批 + 会话切换）
-│   │   ├── history-view.tsx    两栏历史浏览器
+│   │   ├── history-view.tsx    两栏历史（对话 + Agent 会话两分区，后者实时列举）
 │   │   ├── prompt-config-view.tsx   Configure Prompts 界面
 │   │   ├── chat-presets-view.tsx    Chat Presets 管理界面
 │   │   └── history-backup-view.tsx  Backup History：导出 / 导入 / 抢救
