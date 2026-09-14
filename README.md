@@ -119,6 +119,9 @@ Raycast 在安装扩展时会比对「扩展依赖的 API 版本」和「你的�
 ```bash
 # 只需要把上面第 1 步的克隆换成这条（其余完全一样）
 git clone -b raycast-v1 https://github.com/grunmin/deepseek-quick.git
+
+# 如果那台机器上已经克隆过（现在停在 main），切分支即可，依赖要重装
+git fetch origin && git checkout raycast-v1 && npm install && npm run dev
 ```
 
 > 不想用 git：在 [GitHub 仓库页](https://github.com/grunmin/deepseek-quick)把分支切到 `raycast-v1`
