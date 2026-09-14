@@ -50,10 +50,10 @@ const MAX_SESSION_ITEMS = 30;
  * 「过程显示」的三个档位，与 lib/acp/render.ts 的 ProcessDetail 一一对应。
  * 不写 `description`：`Action` 没有 subtitle（约束 17），摘要只能并进 title。
  */
-const DETAIL_LEVELS: { value: ProcessDetail; title: string }[] = [
-  { value: "concise", title: "精简：工具一行，不展开输出（默认）" },
-  { value: "minimal", title: "只看结果：过程收成一行统计" },
-  { value: "detailed", title: "详细：工具卡片 + 完整输出 / diff" },
+const DETAIL_LEVELS: { value: ProcessDetail; title: string; short: string }[] = [
+  { value: "minimal", title: "只看结果：过程收成一行统计（默认）", short: "只看结果" },
+  { value: "concise", title: "精简：工具一行，不展开输出", short: "精简" },
+  { value: "detailed", title: "详细：工具卡片 + 完整输出 / diff", short: "详细" },
 ];
 
 /**
@@ -78,7 +78,7 @@ export function AgentView({ initialSessionId, initialCwd }: AgentViewProps) {
   const [modes, setModes] = useState<SessionModeStateWire>();
   const [commands, setCommands] = useState<AvailableCommandWire[]>([]);
   /** 过程显示档位。偏好给默认值，⌘K 里可以只对**本次窗口**改（不写回设置） */
-  const [detail, setDetail] = useState<ProcessDetail>("concise");
+  const [detail, setDetail] = useState<ProcessDetail>("minimal");
 
   const clientRef = useRef<AcpClient | null>(null);
   const modelRef = useRef(new TranscriptModel());
@@ -99,7 +99,7 @@ export function AgentView({ initialSessionId, initialCwd }: AgentViewProps) {
   const lifecycleRef = useRef(0);
   const pinnedRef = useRef(false);
   const showReasoningRef = useRef(false);
-  const detailRef = useRef<ProcessDetail>("concise");
+  const detailRef = useRef<ProcessDetail>("minimal");
   const lastFlushRef = useRef(0);
   const pushedRef = useRef("\u0000");
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -482,7 +482,8 @@ export function AgentView({ initialSessionId, initialCwd }: AgentViewProps) {
   /* ────────────────────────── 渲染 ────────────────────────── */
 
   const modelLabel = currentValue(configOptions, "model") ?? "默认模型";
-  const subtitle = [status, error ? "⚠️ 出错" : "", modelLabel, modes?.currentModeId ?? ""]
+  const detailLabel = DETAIL_LEVELS.find((level) => level.value === detail)?.short ?? "过程";
+  const subtitle = [status, error ? "⚠️ 出错" : "", modelLabel, modes?.currentModeId ?? "", `过程:${detailLabel}`]
     .filter(Boolean)
     .join(" · ");
 

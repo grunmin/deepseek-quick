@@ -45,9 +45,9 @@ function asOptionalEffort(value: unknown): Effort | undefined {
   return value === "none" || value === "low" || value === "high" || value === "max" ? value : undefined;
 }
 
-/** 认不出的值回落到「精简」：过程默认别喧宾夺主，结论才是用户要的 */
+/** 认不出的值回落到「只看结果」（产品默认）：过程默认别喧宾夺主，结论才是用户要的 */
 function asProcessDetail(value: unknown): ProcessDetail {
-  return value === "minimal" || value === "concise" || value === "detailed" ? value : "concise";
+  return value === "minimal" || value === "concise" || value === "detailed" ? value : "minimal";
 }
 
 /**

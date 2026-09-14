@@ -227,16 +227,19 @@ agent.tsx → <AgentView>
 
 - 三个文件分工：`client.ts` 只管**线**（分帧 / 请求-回执 / 子进程生命周期），
   `render.ts` 只管**模型与 Markdown**（纯函数、可单测），`launch.ts` 只管**偏好 → spawn 三元组**。
-- **过程展示分三档**（`render.ts` 的 `ProcessDetail`），默认 `concise`：一次真实任务常有几十次
-  工具调用，全量展开会把结论顶出视口（详情面板没有滚动 API，见约束 18）。
+- **过程展示分三档**（`render.ts` 的 `ProcessDetail`），产品默认 `minimal`（扩展偏好
+  `agentDetail`；`package.json` 的 default 与 `config.ts` 的兜底值要一起改）：一次真实任务常有
+  几十次工具调用，全量展开会把结论顶出视口（详情面板没有滚动 API，见约束 18）。
+  - `minimal`（默认）：过程收成一行统计，面板上只剩「你的话 + 结论」。
   - `concise`：工具一行（`✅ bash · date`、`📝 path +3 −1`），输出与 diff 正文不展开；
-    **失败的工具例外**，连输出一起留——「哪步没成、为什么」是过程里唯一必须留的信息。
     中间说明（非本轮最后一段正文）降级成一行 `> 💬` 引用。
-  - `minimal`：过程收成一行统计，面板上只剩「你的话 + 结论」。
   - `detailed`：最初的行为（工具卡片 + 完整输出 / diff）。
+  - 三档里有两条**共通的底线**：**失败的工具有输出一起留**（「哪步没成、为什么」是过程里
+    唯一必须留的信息），**审批 / 取消的提示行永远在**（它可能就是「为什么没继续」）。
   - 三档共同的一条：**本轮最后一段正文 = 结论，永远完整显示**。流式期间正在写的那段
     天然是最后一段，所以边写边读读到的就是结论本身。
-  - 默认值走扩展偏好 `agentDetail`；`⌘K` →「过程显示（本次窗口）」是**临时覆盖**（不写设置）。
+  - `⌘K` →「过程显示（本次窗口）」是**临时覆盖**（不写设置）；当前档位也写在列表行副标题里
+    （`过程:只看结果`），免得 ⌘K 藏得深、看不出生效没有。
 - **History 里的「Agent 会话」是实时列举的，本地不留副本**（`lib/agent-sessions.ts`）：
   起一个短命 agent 进程 `session/list` 拿台账（id / 标题 / cwd / updatedAt），用完立刻
   `dispose()`；`↵` 时把 `sessionId` + 该会话自己的 `cwd` 交给 `AgentView`
@@ -748,7 +751,7 @@ interface AgentViewProps { initialSessionId?: string; initialCwd?: string }
 
 /** 过程显示档位（见架构第 6 节）；默认值来自扩展偏好 agentDetail */
 type ProcessDetail = "minimal" | "concise" | "detailed";
-/** transcriptMarkdown 的入参；detail 缺省 = "detailed"（保持旧调用方语义） */
+/** transcriptMarkdown 的入参；detail 缺省 = "detailed"（渲染层不丢信息；产品默认见 agentDetail） */
 interface RenderOptions { showReasoning: boolean; detail?: ProcessDetail; latestOnly?: boolean }
 
 /**
