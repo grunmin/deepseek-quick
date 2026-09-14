@@ -7,6 +7,34 @@
 
 ---
 
+## 分支说明（先读这条）
+
+本仓库有两条**长期分支**，差别只在 `package.json` 的一行依赖：
+
+| 分支 | `@raycast/api` | 面向的 Raycast |
+|---|---|---|
+| `main` | `^2.3.1` | **2.x**（当前正式版） |
+| `raycast-v1` | `^1.104.25` | **1.x**（已被 2.0 取代的旧版 macOS 应用） |
+
+背景：Raycast 在安装/更新扩展时会比对「扩展实际使用的 API 版本」和「应用版本」，不匹配就提示
+用户升级应用、装不上（[Versioning](https://developers.raycast.com/information/versioning)）。
+v1 应用里没有 2.x 的 API runtime，所以 `main` 在 v1 上装不了。1.x 线**冻结在 1.104.25
+（2026-08-18）**，2.x 从次日开始 —— 这就是 `raycast-v1` 钉这个版本号的原因。
+
+`raycast-v1` 是**刻意的降级，不是忘了升级**：
+
+- **不要**把 `@raycast/api` 升回 2.x，也**不要**把两条分支合并 —— 这条分支存在的唯一理由就是服务旧应用。
+- 升级依赖时 `package-lock.json` 里的 `allowScripts`（esbuild 版本）也会跟着变，别用 `main` 的覆盖它。
+- 反过来，`main` 上的功能改动可以正常 cherry-pick 过来：**源码（`src/`、`scripts/`）两条分支完全一致**
+  （到目前为止一行都没改），冲突只会出现在 `package.json` / `package-lock.json`。
+- 用到的 API 全是 v1 就有的（`List` / `Detail` / `Form` / `Action` / `LocalStorage` /
+  `getSelectedText` 等），所以降级不影响功能；2.x 相对 1.x 新增的只有 `ExtensionModel*`
+  这类 AI 扩展 API。**如果哪天要用 2.x 新 API，那条改动只能留在 `main`。**
+- 当前状态：`npx tsc --noEmit`、`npm run build`、`npm run verify` 在 1.104.25 下均已通过；
+  **真机（Raycast v1）运行验证由维护者在旧机上做**，改完这条分支要记得回去跑一遍。
+
+---
+
 ## 项目一句话
 
 一个 macOS **Raycast 扩展**：读取当前选区文本（或 Finder 里的图片），直连 DeepSeek API，
@@ -18,7 +46,7 @@
 | 项 | 值 |
 |---|---|
 | 语言 | TypeScript（`strict: true`，`isolatedModules`） |
-| UI | React 19 + `@raycast/api` 2.3.1（**没有 DOM / CSS**，只有 Raycast 组件） |
+| UI | React 19 + `@raycast/api` **1.104.25**（本分支；`main` 是 2.3.1，见下方「分支说明」）（**没有 DOM / CSS**，只有 Raycast 组件） |
 | JSX | `react-jsx`（无需 `import React`） |
 | 构建 | Raycast CLI（内部用 esbuild），入口是 `package.json` 里的 `commands` |
 | 运行环境 | Raycast 桌面端内嵌的 Node 运行时；`node:fs` / `child_process` / `fetch` 均可用 |
@@ -63,7 +91,8 @@ curl -sSL "https://developers.raycast.com/api-reference/user-interface/detail.md
 两条经验：
 
 - **类型定义才是最终事实来源**。文档会滞后；判断"某个 prop / API 到底存不存在"，
-  以 `node_modules/@raycast/api/types/index.d.ts` 为准（本仓库装的 2.3.1 就是 npm 上的 `latest`）。
+  以 `node_modules/@raycast/api/types/index.d.ts` 为准（本分支装的 1.104.25 已是 v1 线的最后一版，
+  `main` 上的 2.3.1 才是 npm 的 `latest`）。
   约束 12 的结论就是这么来的：整个 API 里只有 2 处 `markdown?:`。
 - **截图不等于能力**。文档/商店里的 Quick AI、AI Chat、AI Commands 窗口都是 **Raycast 原生**的，
   扩展只能注册 `tools` 供其调用，渲染不了那种「无侧栏 + 满宽输入」的界面（见约束 12）。

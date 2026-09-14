@@ -398,7 +398,7 @@
     }
   ],
   "dependencies": {
-    "@raycast/api": "^2.3.1"
+    "@raycast/api": "^1.104.25"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -414,6 +414,6 @@
     "fix-lint": "ray lint --fix"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.27.7": true
   }
 }

@@ -72,9 +72,9 @@
 
 ## 环境要求
 
-- **macOS**（Raycast 只有 macOS 版）
-- **[Raycast](https://www.raycast.com/)** 已安装并登录
-- **Node.js 20+**（推荐 LTS；构建扩展时使用。本项目在 Node 26 上验证通过）
+- **macOS**（Raycast v1 只有 macOS 版；v2 另有 Windows 版，但本扩展未在 Windows 上验证过）
+- **[Raycast](https://www.raycast.com/)** 已安装并登录 —— **v1 / v2 都能用**，只是要选对分支（见[安装](#安装)）
+- **Node.js 22.22.2+**（只用于构建扩展。Raycast CLI 要求 ≥ 22.22.2；本项目在 Node 26 上验证通过）
 - 一个 **DeepSeek API Key** —— 到 <https://platform.deepseek.com/api_keys> 申请
 - 首次运行需要网络（`npm install` 拉依赖）
 
@@ -101,6 +101,31 @@ npm run dev
 
 > **验证安装**：打开 Raycast（`⌥Space`）→ 输入 `Explain Selection` → 应该能看到
 > 「DeepSeek Quick」分类下的这条命令。第一次运行会提示填 API Key。
+
+### 如果你的 Raycast 还是 v1
+
+Raycast 在安装扩展时会比对「扩展依赖的 API 版本」和「你的应用版本」，对不上会提示升级应用、
+根本装不上（[官方版本机制](https://developers.raycast.com/information/versioning)）。
+所以本仓库用两条分支分别服务两个版本：
+
+| 你的 Raycast | 用哪条分支 | 依赖的 `@raycast/api` |
+|---|---|---|
+| **2.x**（当前正式版） | `main` | 2.3.1 |
+| **1.x**（旧版） | `raycast-v1` | 1.104.25（v1 线的最后一版，2026-08-18 发布） |
+
+`raycast-v1` 只钉了依赖，**源码一行没动** —— 这个扩展用到的 API 全都是 v1 就有的。
+反过来，1.x 构建的扩展在 v2 应用上同样受支持，所以**拿不准自己用的是哪个版本时，直接装 `raycast-v1` 即可**。
+
+```bash
+# 只需要把上面第 1 步的克隆换成这条（其余完全一样）
+git clone -b raycast-v1 https://github.com/grunmin/deepseek-quick.git
+```
+
+> 不想用 git：在 [GitHub 仓库页](https://github.com/grunmin/deepseek-quick)把分支切到 `raycast-v1`
+> → `Code` → `Download ZIP`，解压后同样 `npm install && npm run dev`。
+>
+> 两条分支的功能完全一样（`src/` 一字不差），差别只在 `package.json` 的依赖 ——
+> 因为 v1 应用里没有 2.x 的 API runtime。日常开发在 `main`，改动再同步到 `raycast-v1`。
 
 ### 更新
 
