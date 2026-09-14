@@ -302,9 +302,20 @@ function extractOutput(wire: ToolCallWire, contents?: ToolCallContentWire[]): st
 
 /* ────────────────────────── 模型 → Markdown ────────────────────────── */
 
+/**
+ * 过程（工具调用 / 中间说明）显示到什么程度。
+ *
+ * 用户看 agent 干活是**为了拿结果**，过程只是「它在动」的证据 —— 一次真实任务动辄几十次
+ * 工具调用，全量展开会把结论顶到视口外（滚动 API 又不存在，见 AGENTS.md 约束 18）。
+ * 所以默认是 `concise`，`detailed` 只作为「这次我想看看它到底跑了什么」的临时档位。
+ */
+export type ProcessDetail = "minimal" | "concise" | "detailed";
+
 export interface RenderOptions {
   /** 扩展级偏好 `showReasoning`：思考链默认不显示，免得把结论顶出视口 */
   showReasoning: boolean;
+  /** 缺省 = `detailed`（保持「不传就是全量」的旧语义，验证脚本直接用得上） */
+  detail?: ProcessDetail;
   /** 发送瞬间那次「只有最新一轮」的短渲染，用来把详情面板的滚动位置钳回顶部 */
   latestOnly?: boolean;
 }
@@ -312,6 +323,10 @@ export interface RenderOptions {
 /** 工具输出的渲染上限：详情面板的宽度和滚动都很有限，长输出交给「复制」动作 */
 const MAX_OUTPUT_LINES = 24;
 const MAX_STEP_CHARS = 4000;
+/** 失败的工具即使被折叠，也留几行输出 —— 否则用户只知道「失败了」，不知道「为什么」 */
+const FAILED_OUTPUT_LINES = 6;
+/** 精简档里中间说明降级成引用后留几行 */
+const INTERMEDIATE_LINES = 4;
 
 /**
  * 详情面板的 markdown。**最新一轮置顶**（与引用历史相反），原因见 AGENTS.md 约束 18：
@@ -342,6 +357,12 @@ export function transcriptMarkdown(model: TranscriptModel, options: RenderOption
 }
 
 function turnMarkdown(turn: Turn, options: RenderOptions): string {
+  const detail = options.detail ?? "detailed";
+  return detail === "detailed" ? turnDetailed(turn, options) : turnCompact(turn, options, detail);
+}
+
+/** 详细档：工具卡片 + 完整输出 / diff，正文按时间线原样铺开（最初的行为，保留） */
+function turnDetailed(turn: Turn, options: RenderOptions): string {
   const parts: string[] = [];
   if (turn.user) parts.push(`**你**\n\n${quote(turn.user)}`);
 
@@ -357,6 +378,124 @@ function turnMarkdown(turn: Turn, options: RenderOptions): string {
   if (turn.usage) parts.push(usageLine(turn.usage));
 
   return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * 精简 / 只看结果档。
+ *
+ * 两条规则把「过程」压下去、把「结论」留下来：
+ *
+ * 1. **本轮最后一段正文 = 结论**，永远完整显示；更早的正文只是过程性说明（「我先看看…」），
+ *    降级成一小段引用。流式期间也成立 —— 正在写的那段天然是最后一段，所以边写边读时
+ *    读到的仍然是结论本身。
+ * 2. **工具调用收成一行**（`✅ bash · date`），输出与 diff 正文不进面板；只有**失败**的工具
+ *    例外，连输出一起留着 —— 「哪一步没成、为什么」是用户唯一真的需要的过程信息。
+ */
+function turnCompact(turn: Turn, options: RenderOptions, detail: ProcessDetail): string {
+  const minimal = detail === "minimal";
+  const resultIndex = lastMessageIndex(turn.steps);
+
+  /** 精简档的过程块（工具一行、中间说明降级） */
+  const process: string[] = [];
+  /** 只看结果档里也必须留下的：失败的工具、审批提示 */
+  const kept: string[] = [];
+  let toolRun: string[] = [];
+  let toolCount = 0;
+  let proseCount = 0;
+
+  const flushTools = () => {
+    if (toolRun.length) process.push(toolRun.join("  \n"));
+    toolRun = [];
+  };
+
+  turn.steps.forEach((step, index) => {
+    switch (step.kind) {
+      case "tool": {
+        toolCount += 1;
+        const [line, output] = compactToolMarkdown(step);
+        if (minimal) {
+          if (step.status === "failed") kept.push(output ? `${line}\n\n${output}` : line);
+          return;
+        }
+        toolRun.push(line);
+        if (output) {
+          flushTools();
+          process.push(output);
+        }
+        return;
+      }
+      case "message": {
+        if (index === resultIndex) return; // 结论单独收，最后统一拼
+        proseCount += 1;
+        if (!minimal) process.push(`> 💬 ${clip(step.text, INTERMEDIATE_LINES).text.replace(/\n/g, "\n> ")}`);
+        return;
+      }
+      case "thought":
+        if (options.showReasoning) {
+          flushTools();
+          (minimal ? kept : process).push(thoughtMarkdown(step.text));
+        }
+        return;
+      case "note":
+        // 审批请求 / 拒绝 / 取消这类提示在任何档位都要看得见：它可能就是「为什么没继续」
+        flushTools();
+        (minimal ? kept : process).push(`> ⚠️ ${step.text}`);
+        return;
+    }
+  });
+  flushTools();
+
+  const parts: string[] = [];
+  if (turn.user) parts.push(`**你**\n\n${quote(turn.user)}`);
+
+  if (minimal) {
+    const summary: string[] = [];
+    if (toolCount) summary.push(`🛠 ${toolCount} 步工具调用`);
+    if (proseCount) summary.push(`${proseCount} 段过程说明`);
+    if (summary.length) parts.push(`_${summary.join(" · ")}（⌘K →「过程显示」可展开）_`);
+    parts.push(...kept);
+  } else {
+    parts.push(...process);
+  }
+
+  if (resultIndex >= 0) {
+    const result = turn.steps[resultIndex] as TextStep;
+    parts.push(result.text);
+  }
+
+  if (!turn.finished) parts.push("_⏳ 运行中…_");
+  if (turn.error) parts.push(`### ⚠️ 这一轮出错了\n\n${fence(turn.error, "")}`);
+  if (turn.usage) parts.push(usageLine(turn.usage));
+
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/** 本轮最后一段正文的下标；没有正文就是 -1 */
+function lastMessageIndex(steps: Step[]): number {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (steps[i].kind === "message") return i;
+  }
+  return -1;
+}
+
+/**
+ * 精简档的一行工具卡片。返回值是**段落数组**：`[0]` 是那一行，`[1]`（可选）是失败时的输出。
+ * 拆开返回是因为调用方要把「一条条工具」粘成紧凑块，而输出必须独占段落。
+ */
+function compactToolMarkdown(step: ToolStep): [string, string?] {
+  const icon = TOOL_ICON[step.status] ?? "•";
+  const label = step.title || step.name;
+  const line = `\`${icon} ${step.name}\` **${escapeInline(label)}**`;
+
+  if (step.diff) return [`${line} · 📝 \`${step.diff.path}\` ${diffStat(step.diff)}`];
+
+  const output = step.output?.trim();
+  if (step.status === "failed" && output) {
+    const clipped = clip(output, FAILED_OUTPUT_LINES);
+    const omitted = clipped.omitted > 0 ? `\n\n_…还有 ${clipped.omitted} 行（⌘⌥C 复制全文）_` : "";
+    return [line, `${fence(clipped.text, outputLang(step))}${omitted}`];
+  }
+  return [line];
 }
 
 const TOOL_ICON: Record<string, string> = {
@@ -461,20 +600,13 @@ function clip(text: string, maxLines = MAX_OUTPUT_LINES): Clipped {
 }
 
 /**
- * 一个「够用就好」的 diff。
+ * 剪掉公共前缀 / 后缀：剩下的中间那段就是编辑的实质。
  *
- * 刻意不做 LCS：完整行级 diff 对几百行的文件就是几十万次比较，而这个面板要的是
- * 「改了什么」的直观印象。剪掉公共前缀/后缀后，中间那段的删除/新增就是编辑的实质，
- * 再加几行上下文，读起来和 git diff 没有区别。
+ * 刻意不做 LCS —— 完整行级 diff 对几百行的文件就是几十万次比较，而面板要的只是
+ * 「改了什么」的直观印象。`diffBlock`（正文）和 `diffStat`（精简档的 `+3 −1`）共用它，
+ * 两处口径必须一致，否则「统计说改了 3 行、展开却看不到 3 行」。
  */
-function diffBlock(diff: { path: string; oldText?: string | null; newText: string }): string {
-  const after = diff.newText.replace(/\n$/, "").split("\n");
-
-  if (diff.oldText === null || diff.oldText === undefined) {
-    return fence(after.map((line) => `+${line}`).join("\n"), "diff");
-  }
-
-  const before = diff.oldText.replace(/\n$/, "").split("\n");
+function commonEdges(before: string[], after: string[]): { head: number; tail: number } {
   let head = 0;
   while (head < before.length && head < after.length && before[head] === after[head]) head++;
   let tail = 0;
@@ -485,6 +617,34 @@ function diffBlock(diff: { path: string; oldText?: string | null; newText: strin
   ) {
     tail++;
   }
+  return { head, tail };
+}
+
+/** 精简档里的 diff 摘要：`+3 −1`。不展开正文，只给「这次编辑有多大」 */
+function diffStat(diff: { oldText?: string | null; newText: string }): string {
+  const after = diff.newText.replace(/\n$/, "").split("\n");
+  if (diff.oldText === null || diff.oldText === undefined) return `+${after.length}`;
+
+  const before = diff.oldText.replace(/\n$/, "").split("\n");
+  const { head, tail } = commonEdges(before, after);
+  const added = after.length - head - tail;
+  const removed = before.length - head - tail;
+  const bits: string[] = [];
+  if (added > 0) bits.push(`+${added}`);
+  if (removed > 0) bits.push(`−${removed}`);
+  return bits.length ? bits.join(" ") : "无变化";
+}
+
+/** 一个「够用就好」的 diff：剪掉公共前后缀，中间的删除/新增加几行上下文 */
+function diffBlock(diff: { path: string; oldText?: string | null; newText: string }): string {
+  const after = diff.newText.replace(/\n$/, "").split("\n");
+
+  if (diff.oldText === null || diff.oldText === undefined) {
+    return fence(after.map((line) => `+${line}`).join("\n"), "diff");
+  }
+
+  const before = diff.oldText.replace(/\n$/, "").split("\n");
+  const { head, tail } = commonEdges(before, after);
 
   const CONTEXT = 2;
   const lines: string[] = [];

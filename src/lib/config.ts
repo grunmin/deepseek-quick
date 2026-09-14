@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { dbg } from "./debug";
 import { DEFAULT_AGENT_ARGS, resolveAcpLaunch, type AcpLaunch } from "./acp/launch";
+import type { ProcessDetail } from "./acp/render";
 
 export type Effort = "none" | "low" | "high" | "max";
 
@@ -31,6 +32,8 @@ export interface ExtensionPreferences {
   agentCommand: string;
   agentArgs: string;
   agentCwd: string;
+  /** Agent 面板里「过程」显示到什么程度（渲染规则见 lib/acp/render.ts） */
+  agentDetail: ProcessDetail;
 }
 
 function asEffort(value: unknown, fallback: Effort): Effort {
@@ -40,6 +43,11 @@ function asEffort(value: unknown, fallback: Effort): Effort {
 /** 只认四个合法档位；`"inherit"` / 空 / 其它一律当「没覆盖」 */
 function asOptionalEffort(value: unknown): Effort | undefined {
   return value === "none" || value === "low" || value === "high" || value === "max" ? value : undefined;
+}
+
+/** 认不出的值回落到「精简」：过程默认别喧宾夺主，结论才是用户要的 */
+function asProcessDetail(value: unknown): ProcessDetail {
+  return value === "minimal" || value === "concise" || value === "detailed" ? value : "concise";
 }
 
 /**
@@ -79,6 +87,7 @@ export function prefs(): ExtensionPreferences {
     agentCommand: p.agentCommand?.trim() || "/bin/bash",
     agentArgs: p.agentArgs?.trim() || DEFAULT_AGENT_ARGS,
     agentCwd: p.agentCwd?.trim() || "",
+    agentDetail: asProcessDetail(p.agentDetail),
   };
 }
 

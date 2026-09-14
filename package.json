@@ -382,6 +382,19 @@
       "description": "agent 的工作目录，它的相对路径都基于这里。留空 = 家目录。建议填你常改的项目目录",
       "type": "textfield",
       "required": false
+    },
+    {
+      "name": "agentDetail",
+      "title": "Agent Process Display",
+      "description": "Agent 面板里「过程」（工具调用 / 中间说明）显示到什么程度。默认精简：工具收成一行、不展开输出，只把最终结论完整显示；面板里 ⌘K →「过程显示」可临时切换",
+      "type": "dropdown",
+      "required": false,
+      "default": "concise",
+      "data": [
+        { "title": "精简：工具一行，不展开输出（推荐）", "value": "concise" },
+        { "title": "只看结果：过程收成一行统计", "value": "minimal" },
+        { "title": "详细：工具卡片 + 完整输出 / diff", "value": "detailed" }
+      ]
     }
   ],
   "dependencies": {

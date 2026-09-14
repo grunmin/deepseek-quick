@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { AcpClient } from "../lib/acp/client";
 import { agentLaunch, prefs } from "../lib/config";
 import { dbg } from "../lib/debug";
-import { TranscriptModel, transcriptMarkdown, type Step, type ToolStep } from "../lib/acp/render";
+import { TranscriptModel, transcriptMarkdown, type ProcessDetail, type Step, type ToolStep } from "../lib/acp/render";
 import type {
   AvailableCommandWire,
   PermissionRequestWire,
@@ -46,6 +46,16 @@ const NEW_SESSION_ID = "__new__";
 /** 会话下拉最多列这么多条 —— dsh 的会话存储是和 web / TUI 共用的，可能非常长 */
 const MAX_SESSION_ITEMS = 30;
 
+/**
+ * 「过程显示」的三个档位，与 lib/acp/render.ts 的 ProcessDetail 一一对应。
+ * 不写 `description`：`Action` 没有 subtitle（约束 17），摘要只能并进 title。
+ */
+const DETAIL_LEVELS: { value: ProcessDetail; title: string }[] = [
+  { value: "concise", title: "精简：工具一行，不展开输出（默认）" },
+  { value: "minimal", title: "只看结果：过程收成一行统计" },
+  { value: "detailed", title: "详细：工具卡片 + 完整输出 / diff" },
+];
+
 export function AgentView() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("正在启动 agent…");
@@ -58,6 +68,8 @@ export function AgentView() {
   const [configOptions, setConfigOptions] = useState<SessionConfigOptionWire[]>([]);
   const [modes, setModes] = useState<SessionModeStateWire>();
   const [commands, setCommands] = useState<AvailableCommandWire[]>([]);
+  /** 过程显示档位。偏好给默认值，⌘K 里可以只对**本次窗口**改（不写回设置） */
+  const [detail, setDetail] = useState<ProcessDetail>("concise");
 
   const clientRef = useRef<AcpClient | null>(null);
   const modelRef = useRef(new TranscriptModel());
@@ -70,13 +82,17 @@ export function AgentView() {
   const lifecycleRef = useRef(0);
   const pinnedRef = useRef(false);
   const showReasoningRef = useRef(false);
+  const detailRef = useRef<ProcessDetail>("concise");
   const lastFlushRef = useRef(0);
   const pushedRef = useRef("\u0000");
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     try {
-      showReasoningRef.current = prefs().showReasoning;
+      const p = prefs();
+      showReasoningRef.current = p.showReasoning;
+      detailRef.current = p.agentDetail;
+      setDetail(p.agentDetail);
     } catch {
       showReasoningRef.current = false;
     }
@@ -86,6 +102,7 @@ export function AgentView() {
   const renderNow = useCallback(() => {
     const next = transcriptMarkdown(modelRef.current, {
       showReasoning: showReasoningRef.current,
+      detail: detailRef.current,
       latestOnly: pinnedRef.current,
     });
     if (next === pushedRef.current) return;
@@ -126,6 +143,19 @@ export function AgentView() {
     setModes(model.modes ? { ...model.modes } : undefined);
     setCommands([...model.commands]);
   }, []);
+
+  /**
+   * 切换「过程显示」档位，**只影响这次窗口**：不写设置、不碰会话。
+   * 想改默认值去扩展设置里的 Agent Process Display。
+   */
+  const applyDetail = useCallback(
+    (level: ProcessDetail) => {
+      detailRef.current = level;
+      setDetail(level);
+      scheduleFlush(true);
+    },
+    [scheduleFlush],
+  );
 
   const refreshSessions = useCallback(async () => {
     const client = clientRef.current;
@@ -473,6 +503,17 @@ export function AgentView() {
               shortcut={{ modifiers: ["cmd"], key: "n" }}
               onAction={() => void switchSession(NEW_SESSION_ID)}
             />
+
+            <ActionPanel.Submenu title="过程显示（本次窗口）" icon={Icon.Eye} filtering={false}>
+              {DETAIL_LEVELS.map((level) => (
+                <Action
+                  key={level.value}
+                  title={level.title}
+                  icon={detail === level.value ? Icon.CheckCircle : Icon.Circle}
+                  onAction={() => applyDetail(level.value)}
+                />
+              ))}
+            </ActionPanel.Submenu>
 
             {configOptions.length > 0 || (modes?.availableModes?.length ?? 0) > 0 ? (
               <ActionPanel.Submenu title="会话配置（模型 / 强度 / 权限）" icon={Icon.Switch} filtering>

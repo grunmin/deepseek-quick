@@ -114,6 +114,87 @@ console.log("场景 1：渲染层（工具卡片 / diff / 用量）");
   ok("diff 保留了上下文行", diffMd.includes(" a") && diffMd.includes(" c"));
 }
 
+console.log("\n场景 1b：过程展示的三档（精简 / 只看结果 / 详细）");
+{
+  // 一轮典型任务：中间说明 → 跑命令 → 改文件 → 结论
+  const model = new acp.TranscriptModel();
+  model.startLocalTurn("看看时间并改一行");
+  model.apply({ sessionUpdate: "agent_message_chunk", content: { text: "我先看看现状。" } });
+  model.apply({
+    sessionUpdate: "tool_call",
+    toolCallId: "t1",
+    name: "bash",
+    title: "date",
+    kind: "execute",
+    status: "in_progress",
+  });
+  model.apply({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "t1",
+    status: "completed",
+    rawOutput: { formatted_output: "Sun Sep 13 23:27:57 CST 2026\n" },
+  });
+  model.apply({
+    sessionUpdate: "tool_call",
+    toolCallId: "t2",
+    name: "edit",
+    title: "Edit /tmp/a.txt",
+    kind: "edit",
+    status: "completed",
+    content: [{ type: "diff", path: "/tmp/a.txt", oldText: "a\nb\nc\n", newText: "a\nB\nc\n" }],
+  });
+  model.apply({ sessionUpdate: "agent_message_chunk", content: { text: "结论：已经改好了。" } });
+  model.finishTurn("end_turn");
+
+  const detailed = acp.transcriptMarkdown(model, { showReasoning: false, detail: "detailed" });
+  const concise = acp.transcriptMarkdown(model, { showReasoning: false, detail: "concise" });
+  const minimal = acp.transcriptMarkdown(model, { showReasoning: false, detail: "minimal" });
+
+  ok("详细档：命令输出进代码块", detailed.includes("```bash") && detailed.includes("Sun Sep 13"));
+  ok("详细档：diff 正文进代码块", detailed.includes("```diff"));
+  ok("详细档：中间说明原样显示", detailed.includes("我先看看现状。"));
+
+  ok("精简档：工具收成一行", concise.includes("`✅ bash`") && !concise.includes("```bash"));
+  ok("精简档：diff 只留统计", concise.includes("+1 −1") && !concise.includes("```diff"));
+  ok("精简档：中间说明降级成引用", concise.includes("> 💬 我先看看现状"));
+  ok("精简档：结论完整保留", concise.includes("结论：已经改好了。"));
+  ok(
+    "精简档：结论排在过程之后（时间线不乱）",
+    concise.indexOf("结论：已经改好了。") > concise.indexOf("✅ bash"),
+  );
+
+  ok("只看结果档：过程收成一行统计", minimal.includes("2 步工具调用") && !minimal.includes("✅ bash"));
+  ok("只看结果档：工具输出彻底不显示", !minimal.includes("Sun Sep 13") && !minimal.includes("```"));
+  ok("只看结果档：中间说明也收掉", !minimal.includes("💬") && !minimal.includes("我先看看现状。"));
+  ok("只看结果档：结论完整保留", minimal.includes("结论：已经改好了。"));
+
+  // 失败的工具是「过程」里唯一不能省的信息：不然后面 500 字结论说「失败了」，
+  // 用户还得去 ⌘⌥C 里翻原因
+  const failing = new acp.TranscriptModel();
+  failing.startLocalTurn("跑个不存在的命令");
+  failing.apply({
+    sessionUpdate: "tool_call",
+    toolCallId: "f1",
+    name: "bash",
+    title: "definitely-not-a-command",
+    kind: "execute",
+    status: "failed",
+    rawOutput: { formatted_output: "zsh: command not found: definitely-not-a-command\n", exit_code: 127 },
+  });
+  failing.apply({ sessionUpdate: "agent_message_chunk", content: { text: "这条命令不存在。" } });
+  failing.finishTurn("end_turn");
+  const failMd = acp.transcriptMarkdown(failing, { showReasoning: false, detail: "minimal" });
+  ok("只看结果档也保留失败的工具", failMd.includes("`❌ bash`"));
+  ok("失败原因即使折叠也留在面板上", failMd.includes("command not found"));
+
+  // 不传 detail 时保持「全量」旧语义（端到端那一段就是这么调的）
+  check(
+    "detail 缺省 = 详细档",
+    acp.transcriptMarkdown(model, { showReasoning: false }),
+    detailed,
+  );
+}
+
 console.log("\n场景 2：回显 vs 历史重放（同一种 user_message_chunk，两种语义）");
 {
   // 实时：agent 会把我刚发的那条回显回来，不能因此多出一轮
